@@ -23,8 +23,8 @@ const ZWNJ := "‌"
 // Every spelling the bot accepts lives here: English short, English long,
 // and Persian, in either digit set and either letter shape.
 func UnitSeconds(word: str): i64:
-    if word == "s" || word == "sec" || word == "secs" || word == "second" || word == "seconds": ret 1 as i64 end
-    if word == "ث" || word == "ثانیه" || word == "ثانیهها" || word == "ثانیهای": ret 1 as i64 end
+    if word == "s" || word == "sec" || word == "secs" || word == "second" || word == "seconds": ret 1 end
+    if word == "ث" || word == "ثانیه" || word == "ثانیهها" || word == "ثانیهای": ret 1 end
 
     if word == "m" || word == "min" || word == "mins" || word == "minute" || word == "minutes": ret MINUTE end
     if word == "د" || word == "دق" || word == "دقیقه" || word == "دقیقهها" || word == "دقیقهای" || word == "دقایق": ret MINUTE end
@@ -44,7 +44,7 @@ func UnitSeconds(word: str): i64:
     if word == "y" || word == "yr" || word == "yrs" || word == "year" || word == "years": ret YEAR end
     if word == "سال" || word == "سالها" || word == "ساله": ret YEAR end
 
-    ret 0 as i64
+    ret 0
 end
 
 // Lower-cases, unifies digits and Persian letter shapes, and turns every

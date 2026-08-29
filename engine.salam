@@ -334,7 +334,7 @@ pub func ResolveExpiry(o: types.Order, entry_time: f64, min_duration: i64, close
     end
     close_at = close
     rolled = ((close - target) / (o.timeframe_seconds as f64) + 0.5) as i64
-    ret 0 as i64
+    ret 0
 end
 
 // Boots the engine: re-attach everything that was live, and refuse to guess

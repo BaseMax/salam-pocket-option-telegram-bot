@@ -67,7 +67,7 @@ end
  */
 pub func ParseInt64(raw: str): i64:
     text := str.Trim(str.ToEnglishDigits(raw))
-    if text.len() == 0: ret 0 as i64 end
+    if text.len() == 0: ret 0 end
 
     mut i := 0
     mut negative := false
@@ -89,7 +89,7 @@ pub func ParseInt64(raw: str): i64:
         i = i + 1
     end
 
-    if digits == 0: ret 0 as i64 end
+    if digits == 0: ret 0 end
     if negative: ret 0 as i64 - value end
     ret value
 end

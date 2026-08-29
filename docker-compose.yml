@@ -1,5 +1,10 @@
 services:
   bot:
+    # The image is built by `./build.sh image`, which stages the Salam
+    # compiler and its standard library where the Dockerfile can reach them.
+    # `docker compose build` alone cannot: the socket.io client this bot needs
+    # is newer than the last Salam release, so the image cannot fetch a
+    # compiler for itself yet.
     build: .
     image: pocket-option-telegram-bot:latest
     container_name: pocket-option-bot
@@ -30,7 +35,7 @@ services:
     mem_limit: 512m
 
     healthcheck:
-      test: ["CMD", "bun", "run", "docker/healthcheck.ts"]
+      test: ["CMD", "/app/docker/healthcheck.sh"]
       interval: 60s
       timeout: 10s
       retries: 3

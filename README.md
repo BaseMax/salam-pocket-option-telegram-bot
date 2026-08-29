@@ -1,6 +1,7 @@
 # Pocket Option Telegram Bot
 
-A Telegram-controlled **conditional order** bot for [Pocket Option](https://pocketoption.com) binary options.
+A Telegram-controlled **conditional order** bot for [Pocket Option](https://pocketoption.com)
+binary options, written in [Salam](https://github.com/SalamLang/Salam).
 
 You tell it a price. It keeps that instrument's live tick stream open, and the moment the market
 touches your price it opens the trade for you and reports back: entry, win, loss, and the account
@@ -8,6 +9,9 @@ balance on every update.
 
 Because these are binary options, there is **no stop loss and no take profit** anywhere in the
 system. The only exit is the expiry the trade was opened with.
+
+The bot is a single native binary with no runtime - no Node, no Bun, no interpreter. It links
+SQLite and speaks socket.io and the Telegram Bot API through the standard library.
 
 ---
 
@@ -47,9 +51,9 @@ for you to check on the broker.
 ## Quick start
 
 ```bash
-bun install
+./build.sh                # or SALAM=/path/to/salam ./build.sh
 cp .env.example .env      # then fill in the two required values
-bun start
+./build/bot
 ```
 
 Minimum `.env`:
@@ -60,6 +64,15 @@ TELEGRAM_ADMIN_IDS=              # leave empty; the first /start claims the bot
 ```
 
 Then in Telegram: `/start`, and give the bot a broker session with `/session demo <SSID>`.
+
+### راه‌اندازی سریع (فارسی)
+
+۱. با `./build.sh` ربات را بسازید؛ فایل اجرایی در `build/bot` ساخته می‌شود.
+۲. فایل `.env.example` را به `.env` کپی کنید و `TELEGRAM_BOT_TOKEN` را بگذارید.
+۳. `./build/bot` را اجرا کنید.
+۴. در تلگرام `/start` بزنید؛ اولین چت مالک ربات می‌شود.
+۵. با `/session demo <SSID>` نشست پاکت آپشن را ثبت کنید (راهنمای گرفتن SSID را با دستور `/session` ببینید).
+۶. با `/new` سفارش بسازید یا از دستور تک‌خطی `/order` استفاده کنید.
 
 ---
 
@@ -173,60 +186,44 @@ next candle instead of opening a trade that is over before it starts.
 
 ## Architecture
 
-```
-src/
-  index.ts              wiring + graceful shutdown
-  config.ts             env parsing and validation (zod)
-  types.ts              domain vocabulary
-  pocket/
-    servers.ts          demo/real endpoint lists with failover
-    protocol.ts         socket.io event names and defensive frame parsers
-    client.ts           one authenticated connection: auth, keepalive, orders
-    reconnect.ts        backoff and endpoint failover policy
-    pending.ts          requests waiting for a broker acknowledgement
-    candles.ts          tick -> candle aggregation (candle / heikin-ashi / line)
-    symbols.ts          symbol spelling and matching against the asset list
-  engine/
-    trigger.ts          pure crossing detection
-    expiry.ts           when a trade closes: fixed seconds or a candle boundary
-    session.ts          one broker connection, its ticks and its candle series
-    session-manager.ts  one session per (account, symbol), reference counted
-    market.ts           balance, asset list, live price
-    engine.ts           the order state machine
-  storage/
-    db.ts               SQLite schema (bun:sqlite, WAL)
-    orders.ts           order repository
-    settings.ts         runtime settings, overriding env
-  telegram/
-    bot.ts              assembly: access control, message routing, wiring
-    runtime.ts          the deps and operations every command shares
-    router.ts           inline-button dispatch by callback prefix
-    reply.ts            HTML defaults, "working…" notices, best-effort API calls
-    texts.ts            the /start guide and its topic pages
-    notify.ts           engine events -> chat messages
-    limits.ts           order guard rails
-    submit.ts           the one path an order takes to reach the engine
-    symbol-check.ts     the broker's verdict on a symbol, in Persian
-    parse.ts            one-line /order syntax
-    format.ts           all Persian user-facing copy
-    commands/
-      help.ts           /start, /help, /id and the guide pages
-      orders.ts         /new, /order, /list, /cancel, /history, /stats
-      market.ts         /balance, /price, /symbols, /status
-      settings.ts       /mode, /settings, /set, /session
-    wizard/
-      index.ts          the /new panel: state, taps, prompts, retiring dead panels
-      panel.ts          panel text and keyboards
-      draft.ts          the draft order and the answers typed into it
-      prompts.ts        what we ask when a value has to be typed
-  util/
-    time.ts             duration parsing/formatting and candle boundaries
-    async.ts            waiting for the first value a subscription delivers
-    values.ts           coercions for data that arrives from outside the process
-    ssid.ts             SSID payload parsing
-    errors.ts           one readable message out of anything thrown
-    emitter.ts          tiny typed event emitter
-```
+| file | what it owns |
+| --- | --- |
+| `main.salam` | startup and the loop |
+| `config.salam` | the environment, and the order limits |
+| `types.salam` | Order, OrderSpec, and the vocabulary constants |
+| `store.salam` | SQLite: schema, orders, settings |
+| `settings.salam` | the defaults `/set` changes, and stored credentials |
+| `timex.salam` | duration parsing and formatting, candle boundaries, prices |
+| `jsonx.salam` | the JSON arrays the broker sends, read defensively |
+| `ssid.salam` | both dialects of the pasted auth frame |
+| `broker.salam` | the Pocket Option socket: auth, ticks, assets, orders, deals |
+| `symbols.salam` | symbol spelling, matching and search |
+| `engine.salam` | the order state machine |
+| `parse.salam` | the one-line `/order` command and every choice word |
+| `texts.salam` | all Persian copy, including the guides |
+| `tgapi.salam` | Telegram calls and inline keyboards |
+| `wizard.salam` | the `/new` panel |
+| `tgbot.salam` | commands, callbacks, notifications |
+
+## Why it is shaped this way
+
+**One thread, one loop.** `main.salam` pumps the broker sockets, moves the
+orders that can move, drains the engine's event queue into Telegram messages,
+and asks Telegram for new commands - about ten times a second. The TypeScript
+version leaned on an event loop and callbacks; Salam lambdas capture by value
+and cannot write back to their surroundings, so every layer here *returns*
+what happened and the loop passes it on. That turned out to suit the domain:
+the engine is a state machine over rows, not a web of listeners.
+
+**Queues instead of callbacks.** `engine.TakeEvent()` and `broker.TakeDeal()`
+hand the caller one thing at a time. Nothing in the trading rules knows that
+Telegram exists, and `tgbot.salam` never reaches into the engine's state.
+
+**SQLite is the truth.** Every state transition is written before it is
+announced, so a restart re-attaches pending, armed and open orders from the
+database. An order that was mid-flight when the process died is flagged
+`failed` rather than retried, exactly as in the TypeScript version - the one
+thing worse than a missed trade is a duplicated one.
 
 Order lifecycle:
 
@@ -242,17 +239,38 @@ pending ──price touches trigger──┬─ touch mode ───────
 
 ## Running with Docker
 
-The image is Bun on Alpine, runs as a non-root user, and keeps a read only root
-filesystem. Only `./data` is writable, which is where the SQLite database lives.
+The image is built in two stages: the first compiles the sources with the
+Salam compiler and **runs the test suite**, so an image that builds is an
+image whose bot passed its tests; the second keeps only the binary, SQLite
+and a CA bundle. It runs as a non-root user with a read only root filesystem,
+and only `./data` is writable, which is where the database lives.
 
 ```bash
-cp .env.example .env                     # then fill in the token and the SSID
-mkdir -p data && sudo chown -R 1000:1000 data   # 1000:1000 is the image's own bun user
+cp .env.example .env                            # then fill in the token and the SSID
+mkdir -p data && sudo chown -R 1000:1000 data   # 1000:1000 is the image's own bot user
+SALAM=/path/to/salam ./build.sh image           # builds pocket-option-telegram-bot:latest
 docker compose up -d
 docker compose logs -f
 ```
 
-To keep the database owned by your own user instead, point the container at it:
+`./build.sh image` stages the compiler and its standard library into
+`.salam-toolchain/` (gitignored, removed again afterwards) because the
+socket.io client this bot needs is newer than the last published Salam
+release. Once a release carries `std/net/socketio`, the Dockerfile can fetch
+its own compiler with the official `install.sh` and this step disappears -
+the comment at the top of the Dockerfile says where.
+
+**Deploying to a machine without a Salam compiler.** Build the image where the
+compiler is, and ship the image rather than the source:
+
+```bash
+SALAM=/path/to/salam ./build.sh image
+docker save pocket-option-telegram-bot:latest | gzip | ssh user@server 'gunzip | docker load'
+ssh user@server 'cd /path/to/app && docker compose up -d'
+```
+
+To keep the database owned by your own user instead of 1000:1000, point the
+container at it:
 
 ```bash
 sed -i "s/^DOCKER_UID=.*/DOCKER_UID=$(id -u)/; s/^DOCKER_GID=.*/DOCKER_GID=$(id -g)/" .env
@@ -266,32 +284,32 @@ project directory where you can read, copy and back it up normally. Point
 `DATA_DIR` in `.env` somewhere else if you want it in another path.
 
 `DOCKER_UID` / `DOCKER_GID` must match the owner of `./data` on the host,
-otherwise the container cannot write the database, and deploying as root is the
-usual way to get this wrong: a freshly cloned `./data` is owned by `root`, while
-the container runs as uid 1000. The entrypoint checks the directory before
-startup and prints the exact `chown` to run instead of failing later on a write.
-The mount is declared with `create_host_path: false`, so a missing `./data`
-stops compose with a clear message rather than creating a root owned directory.
+otherwise the container cannot write the database, and deploying as root is
+the usual way to get this wrong: a freshly cloned `./data` is owned by `root`,
+while the container runs as uid 1000. The entrypoint checks the directory
+before startup and prints the exact `chown` to run instead of failing later on
+a write. The mount is declared with `create_host_path: false`, so a missing
+`./data` stops compose with a clear message rather than creating a root owned
+directory.
 
-The container writes a heartbeat file every 30 seconds and the healthcheck marks
-it unhealthy once that file is older than two minutes, so a process that is
-technically alive but no longer working shows up in `docker ps` as unhealthy.
-With `restart: unless-stopped` the bot comes back after a crash or a reboot, and
-pending orders are re-attached from SQLite on startup.
+The container writes a heartbeat file every 30 seconds and the healthcheck
+marks it unhealthy once that file is older than two minutes, so a process that
+is technically alive but no longer working shows up in `docker ps` as
+unhealthy. With `restart: unless-stopped` the bot comes back after a crash or
+a reboot, and pending orders are re-attached from SQLite on startup.
 
 Useful commands:
 
 ```bash
 docker compose ps                        # health status
 docker compose restart bot               # after changing .env
-docker compose up -d --build             # after changing the code
 cp data/bot.sqlite backup-$(date +%F).sqlite   # back up orders and settings
 ```
 
-Stopping is graceful: `docker compose stop` sends SIGTERM, the bot stops polling,
-closes the broker sockets and the database, and exits within the 20 second grace
-period. Open trades keep running at the broker and are reconciled on the next
-start.
+Stopping is graceful: `docker compose stop` sends SIGTERM, the bot stops
+polling, closes the broker sockets and the database, and exits within the 20
+second grace period. Open trades keep running at the broker and are reconciled
+on the next start.
 
 ## Configuration
 
@@ -306,28 +324,82 @@ notable ones:
 | `PO_SERVER_TIME_OFFSET` | `7200` | Starting guess for the broker clock offset |
 | `MIN_DURATION_SECONDS` | `5` | Broker floor for a binary option |
 | `SESSION_IDLE_TTL_SECONDS` | `60` | How long a session lingers after its last order settles |
-| `DISPLAY_TIMEZONE` | `Asia/Tehran` | Timezone for every timestamp shown in Telegram |
-
+| `DISPLAY_TIMEZONE_OFFSET_MINUTES` | `210` | Minutes east of UTC for every timestamp shown |
 ## Development
 
 ```bash
-bun run dev         # watch mode
-bun run check       # typecheck, then the full test suite
-bun test            # tests only, no network access required
-bun run typecheck   # tsc --noEmit
+./build.sh          # the bot and every check, into ./build
+./build/tests       # the test suite, no network needed
 ```
 
-The engine takes its `SessionManager` by injection, so the whole order state machine
-(triggering, arming, expiry arithmetic, settlement) is tested against a fake broker with no
-sockets involved. The Telegram layer is tested by feeding synthetic updates through grammY and
-capturing the outgoing API calls; `tests/harness.ts` builds that fake bot, `tests/fakes.ts` the
-fake broker and the order fixtures.
+### The checks
 
-`tsconfig.json` fails the build on unused locals and parameters, so dead code cannot accumulate
-quietly.
+`build.sh` also builds the programs used to verify the port against the real
+services. All of them are demo-account only.
+
+| program | what it proves | touches |
+| --- | --- | --- |
+| `tests` | durations, symbols, the command parser, the trading rules, SQLite, settings, every notification, 64-bit ids, update polling | nothing |
+| `recovery` | what a restart does: mid-flight orders fail, live ones are re-attached | nothing |
+| `smoke` | connect, authenticate, asset list, balance, live ticks | broker (read only) |
+| `tgcheck` | getMe, an HTML message with an inline keyboard, edit, delete | Telegram |
+| `dryrun` | a scripted conversation through the real dispatcher, including the whole panel: both menus, every toggle, each typed value, a rejected one, and submit | Telegram + broker |
+| `soak` | four minutes of live ticks: memory, CPU, the expiry rule, idle cleanup | broker (read only) |
+| `tradetest` | one $1 demo trade from trigger to settlement | broker (places a trade) |
+
+`dryrun` and `tgcheck` never call `getUpdates`, so they can be run while
+another instance of the bot is polling the same token.
+
+Measured on the live demo account: 174 assertions pass, four minutes of tick
+traffic leave RSS flat at 2 MB and the CPU at 0%, and one $1 trade went
+`triggered → opened → settled` with the broker's own deal id.
+
+The one thing no check here covers is `getUpdates` itself: Telegram allows a
+single poller per token, so exercising it means being the only bot running on
+that token. Everything around it is covered - `Init`, `Apply` (the half of
+`Poll` that parses updates and moves the offset, driven by canned Telegram
+answers in `tests`), `Dispatch`, `Notify`, and the engine turn.
+
+## Differences from the TypeScript original
+
+This bot began as a TypeScript program; that implementation is in the git
+history up to `ac9807e`. Where the two differ:
+
+- **Telegram ids do not fit in 32 bits.** `str.ToInt` is `i32`, which
+  silently truncates a modern user id (past 2^31), any supergroup id
+  (around -10^12) and every millisecond timestamp. `parse.ParseInt64` reads
+  the digits itself, and every id, uid and timestamp goes through it.
+- **A refused session is silent.** Pocket Option does not answer a dead token
+  with `NotAuthorized`: it accepts the socket, sends the public asset list,
+  and then drops the connection - or says nothing at all. `broker.salam`
+  reads both as a refusal (a disconnect within three seconds of the auth
+  frame having never authenticated, or twelve seconds of silence), so the
+  owner is told to send a fresh SSID instead of the bot reconnecting forever.
+- **Binary frames.** Pocket Option answers with socket.io binary attachments
+  (`{"_placeholder":true,"num":0}` plus the bytes). `broker.Payload()` is the
+  one place that matters; without it the socket authenticates and then looks
+  silent, which is exactly how this port first behaved.
+- **A retired panel keeps its text, not its formatting.** When a tap arrives
+  for a panel whose draft is gone (a restart, or an older panel), the bot
+  appends the "this panel is over" line to the text Telegram hands back. The
+  TypeScript version re-sent the message entities with it; here the summary
+  survives as plain text.
+- **No candle series.** The TypeScript version aggregated ticks into candles
+  and could draw heikin-ashi. The chart type is still carried on every order
+  and still explained in the guide, but nothing in the bot renders candles, so
+  the aggregation was left out rather than written and never called.
+- **Timezone as an offset.** `DISPLAY_TIMEZONE_OFFSET_MINUTES` (default 210,
+  Tehran) replaces the IANA name. Iran does not observe daylight saving, so a
+  fixed offset is exact; anywhere that does would need `calendar.LoadZone`.
+- **Long polling is short polling.** The loop asks Telegram with `timeout=0`
+  once a second instead of holding a 30 second long poll, because the same
+  thread has to keep the broker sockets pumped.
 
 ## Notes and limits
 
+- A refused session is silent: the broker accepts the socket, sends the public asset list and
+  then drops the connection rather than answering `NotAuthorized`. The bot reads that as a
+  refusal and tells you to send a fresh SSID.
 - Pocket Option publishes no API contract. Every frame parser here is defensive, and the client
   treats account-scoped data (a balance push) as proof of authentication so a renamed success event
   cannot strand it. A broker-side change can still break things; `/status` and the connection
