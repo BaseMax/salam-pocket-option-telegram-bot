@@ -1,0 +1,105 @@
+/*
+ * The session table hands out indices that the engine keeps.
+ *
+ * This check opens two sessions, lets one go idle and be closed, and then
+ * asks whether the other's index still names its own socket. Before the
+ * table stopped removing entries, it named the wrong one - an order would
+ * have watched another symbol's price.
+ */
+package main
+
+import str
+import time
+import config "config.salam"
+import broker "broker.salam"
+import ssid "ssid.salam"
+import types "types.salam"
+
+mut failures := 0
+
+func Check(condition: bool, message: str):
+    if condition:
+        println "  ok   " + message
+    else:
+        println "  FAIL " + message
+        failures = failures + 1
+    end
+end
+
+func main:
+    c := config.Load()
+    if c.demo_ssid.len() == 0:
+        println "set PO_DEMO_SSID to run this"
+        ret
+    end
+    auth := ssid.Parse(c.demo_ssid, types.MODE_DEMO, c.demo_uid)
+    if !auth.ok:
+        println "SSID unreadable: " + auth.error
+        ret
+    end
+    broker.SetCredentials(types.MODE_DEMO, auth)
+
+    println "opening two sessions"
+    first := broker.Acquire(types.MODE_DEMO, "EURUSD_otc", 60 as i64)
+    second := broker.Acquire(types.MODE_DEMO, "GBPUSD_otc", 60 as i64)
+    Check(first != second, "they land in different slots")
+    Check(broker.Get(first).symbol == "EURUSD_otc", "the first index names its own symbol")
+    Check(broker.Get(second).symbol == "GBPUSD_otc", "and so does the second")
+
+    // Let them settle, so both are authenticated before anything is closed.
+    settle_ms := time.NowMillis() + 4000 as i64
+    while time.NowMillis() < settle_ms:
+        broker.Pump(100, c.max_tick_gap)
+    end
+
+    println "letting the first go idle and closing it"
+    broker.Release(first)
+
+    // CloseIdle closes what has been idle *longer* than the ttl, so a
+    // just-released session survives the first sweep. Wait on the clock, not
+    // on a pump count: with ticks arriving the pump returns immediately and
+    // a fixed number of turns is no time at all.
+    until_ms := time.NowMillis() + 1500 as i64
+    while time.NowMillis() < until_ms:
+        broker.Pump(100, c.max_tick_gap)
+    end
+    broker.CloseIdle(1 as i64)
+
+    Check(!broker.IsLive(first), "the idle slot is emptied")
+    Check(broker.IsLive(second), "the held one is untouched")
+    Check(broker.Get(second).symbol == "GBPUSD_otc", "and its index still names its own symbol")
+    Check(broker.Find(types.MODE_DEMO, "GBPUSD_otc") == second, "which is also what Find says")
+    Check(broker.Find(types.MODE_DEMO, "EURUSD_otc") < 0, "the closed one is gone from Find")
+
+    println "opening a third session"
+    third := broker.Acquire(types.MODE_DEMO, "AUDCAD_otc", 60 as i64)
+    Check(third == first, "it reuses the emptied slot instead of growing the table")
+    Check(broker.Get(second).symbol == "GBPUSD_otc", "the held session is still itself")
+
+    third_ms := time.NowMillis() + 3000 as i64
+    while time.NowMillis() < third_ms:
+        broker.Pump(100, c.max_tick_gap)
+    end
+    Check(broker.Get(third).symbol == "AUDCAD_otc", "and the reused slot is the new symbol")
+
+    // A notification's balance suffix asks the broker, not a control session:
+    // the account balance arrives on every authenticated socket, and until
+    // this was fixed only a session opened by /balance could answer.
+    mut balance := 0.0
+    known := broker.CachedBalance(types.MODE_DEMO, balance)
+    Check(known, "the balance is known from a symbol session alone")
+    Check(balance > 0.0, "and it is a real number: " + str.FromFloat(balance))
+    mut other := 0.0
+    Check(!broker.CachedBalance(types.MODE_REAL, other), "an account with no session knows nothing")
+
+    broker.Release(second)
+    broker.Release(third)
+    broker.CloseAll()
+
+    println "---"
+    if failures == 0:
+        println "sessions: all checks passed"
+    else:
+        println "sessions: " + str.FromInt(failures as i64) + " failed"
+    end
+end

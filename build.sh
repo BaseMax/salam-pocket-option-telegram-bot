@@ -34,7 +34,7 @@ mkdir -p "$OUT"
 # removes a class of "undefined reference" builds that are not real errors.
 rm -rf .salam-build
 
-for program in main tests recovery smoke tgcheck dryrun soak tradetest; do
+for program in main tests recovery sessions smoke tgcheck dryrun soak tradetest; do
     printf '%s… ' "$program"
     "$SALAM" build "$program.salam" --output="$OUT/$program" > "$OUT/$program.log" 2>&1 \
         || { echo "failed - see $OUT/$program.log"; exit 1; }

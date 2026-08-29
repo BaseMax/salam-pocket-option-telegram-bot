@@ -87,13 +87,60 @@ end
 
 func Attach(o: types.Order):
     if FindAttachment(o.id) >= 0: ret end
+
     session := broker.Acquire(o.account_mode, o.symbol, o.timeframe_seconds)
+    if !broker.IsLive(session):
+        // No socket, so nothing will ever watch this price. Say so now rather
+        // than leaving the order pending against a connection that does not
+        // exist.
+        Finish(o, types.ST_FAILED, "could not open a broker session for this order",
+            EV_FAILED, 0.0, "اتصال به کارگزار برای این سفارش باز نشد.")
+        ret
+    end
+
     mut a := Attachment {}
     a.order_id = o.id
     a.session = session
     _attachments.push(a)
 end
 
+
+/*
+ * One order's second: expire it if its validity ran out, enter it if the
+ * candle it was waiting for has opened, or say that the broker is late with
+ * a result.
+ */
+func HousekeepOne(index: int, now: f64):
+    a := _attachments.get(index)
+    o := store.Get(a.order_id)
+    if o.id.len() == 0:
+        Detach(a.order_id)
+        ret
+    end
+
+    if o.status == types.ST_PENDING && o.valid_until > 0.0 && now >= o.valid_until:
+        Finish(o, types.ST_EXPIRED, "the trigger price was never reached", EV_EXPIRED, 0.0, "")
+        ret
+    end
+
+    s := broker.Get(a.session)
+    if o.status == types.ST_ARMED && s.has_price:
+        // A quiet market sends no ticks, so the candle that should have
+        // opened this order is noticed here rather than on a tick.
+        MaybeEnterOnNewCandle(o, now + (s.time_offset as f64), s.price, s.time_offset, s.tick_follows_gap)
+        ret
+    end
+
+    if o.status == types.ST_OPEN && !a.settlement_warned && o.closes_at > 0.0:
+        if now > o.closes_at + (_config.order_settle_grace as f64):
+            mut warned := a
+            warned.settlement_warned = true
+            _attachments.set(index, warned)
+            broker.RefreshBalance(a.session)
+            Publish(EV_SETTLE_LATE, o, 0.0, 0.0, "")
+        end
+    end
+end
 
 // Ends an order's life: record the outcome, let the session go, say so.
 func Finish(o: types.Order, status: str, note: str, kind: str, price: f64, detail: str):
@@ -127,9 +174,11 @@ func Place(o: types.Order, entry_time: f64):
         _config.order_ack_timeout * 1000, _config.max_tick_gap)
 
     mut retried := ack
-    if !ack.ok && close_at > 0.0:
-        // Some servers refuse an absolute close; the same trade as a
-        // duration is the fallback the TypeScript client also used.
+    if !ack.ok && ack.refused && close_at > 0.0:
+        // Some servers refuse an absolute close, and the same trade sent as a
+        // duration goes through. Only a refusal is retried: an order that
+        // merely timed out may have been accepted, and sending it again would
+        // open a second trade.
         mut seconds := (broker_close - entry_time + 0.5) as i64
         if seconds < _config.min_duration: seconds = _config.min_duration end
         retried = broker.PlaceOrder(a.session, o.amount, o.direction, seconds, 0.0,
@@ -515,35 +564,12 @@ pub func Housekeep():
     now := timex.NowSeconds()
     mut i := 0
     while i < _attachments.len():
-        a := _attachments.get(i)
-        o := store.Get(a.order_id)
-        if o.id.len() == 0:
-            Detach(a.order_id)
-            continue
-        end
-
-        if o.status == types.ST_PENDING && o.valid_until > 0.0 && now >= o.valid_until:
-            Finish(o, types.ST_EXPIRED, "the trigger price was never reached", EV_EXPIRED, 0.0, "")
-            continue
-        end
-
-        s := broker.Get(a.session)
-        if o.status == types.ST_ARMED && s.has_price:
-            MaybeEnterOnNewCandle(o, now + (s.time_offset as f64), s.price, s.time_offset, s.tick_follows_gap)
-            i = i + 1
-            continue
-        end
-
-        if o.status == types.ST_OPEN && !a.settlement_warned && o.closes_at > 0.0:
-            if now > o.closes_at + (_config.order_settle_grace as f64):
-                mut warned := a
-                warned.settlement_warned = true
-                _attachments.set(i, warned)
-                broker.RefreshBalance(a.session)
-                Publish(EV_SETTLE_LATE, o, 0.0, 0.0, "")
-            end
-        end
-        i = i + 1
+        // Anything in here may detach the order it is looking at, which
+        // shifts the next one into this index. Compare the length instead of
+        // stepping blindly, or a housekeeping turn skips an order.
+        before := _attachments.len()
+        HousekeepOne(i, now)
+        if _attachments.len() == before: i = i + 1 end
     end
 
     broker.CloseIdle(_config.session_idle_ttl)

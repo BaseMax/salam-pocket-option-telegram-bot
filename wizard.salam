@@ -579,6 +579,10 @@ end
  * knows not to treat it as anything else.
  */
 pub func HandleText(b: bot.Bot, chat_id: i64, text: str, message_id: i64): bool:
+    // A photo or a sticker arrives with no text; it is not an answer to
+    // anything, and reading it as one would reject it in Persian.
+    if text.len() == 0: ret false end
+
     idx := Find(chat_id)
     if idx < 0: ret false end
     mut d := _drafts.get(idx)

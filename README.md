@@ -340,7 +340,8 @@ services. All of them are demo-account only.
 | program | what it proves | touches |
 | --- | --- | --- |
 | `tests` | durations, symbols, the command parser, the trading rules, SQLite, settings, every notification, 64-bit ids, update polling | nothing |
-| `recovery` | what a restart does: mid-flight orders fail, live ones are re-attached | nothing |
+| `recovery` | what a restart does: mid-flight orders fail, live ones are re-attached, `/session` reloads credentials without losing them | nothing |
+| `sessions` | the session table hands out indices the engine keeps: closing one must not renumber another, and a balance is known from any socket of that account | broker (read only) |
 | `smoke` | connect, authenticate, asset list, balance, live ticks | broker (read only) |
 | `tgcheck` | getMe, an HTML message with an inline keyboard, edit, delete | Telegram |
 | `dryrun` | a scripted conversation through the real dispatcher, including the whole panel: both menus, every toggle, each typed value, a rejected one, and submit | Telegram + broker |

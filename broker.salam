@@ -97,13 +97,24 @@ end
 pub struct Ack:
     pub ok: bool = false
     pub error: str = ""
+    // Set only when the broker said no. A timeout leaves it false, because
+    // an order that was never acknowledged may still have been accepted, and
+    // resending it would open a second trade.
+    pub refused: bool = false
     pub deal_id: str = ""
     pub open_price: f64 = 0.0
     pub open_time: f64 = 0.0
     pub close_time: f64 = 0.0
 end
 
-// One live connection, and everything it has told us.
+/*
+ * One live connection, and everything it has told us.
+ *
+ * A slot is never removed from the session table: the engine holds indices
+ * into it, and removing an entry would silently point every later order at
+ * another symbol's socket. Closing a session empties its slot instead, and
+ * the next Acquire reuses it. `p == null` means the slot is free.
+ */
 @en "Session"
 @fa "نشست"
 pub struct Session:
@@ -550,10 +561,16 @@ pub func Find(mode: str, symbol: str): int:
     mut i := 0
     while i < _sessions.len():
         s := _sessions.get(i)
-        if s.mode == mode && s.symbol == symbol: ret i end
+        if s.p != null && s.mode == mode && s.symbol == symbol: ret i end
         i = i + 1
     end
     ret 0 - 1
+end
+
+// Whether a slot still holds a socket, for callers that walk the table.
+pub func IsLive(index: int): bool:
+    if index < 0 || index >= _sessions.len(): ret false end
+    ret _sessions.get(index).p != null
 end
 
 /*
@@ -584,6 +601,17 @@ pub func Acquire(mode: str, symbol: str, timeframe: i64): int:
     s.holders = 1 as i64
     if timeframe > 0: s.timeframe = timeframe end
     OpenSocket(s)
+
+    // Reuse an emptied slot before growing the table, so a bot that opens and
+    // closes many symbols does not grow it without bound.
+    mut i := 0
+    while i < _sessions.len():
+        if _sessions.get(i).p == null:
+            _sessions.set(i, s)
+            ret i
+        end
+        i = i + 1
+    end
     _sessions.push(s)
     ret _sessions.len() - 1
 end
@@ -623,7 +651,13 @@ end
  * while the loop waits on another.
  */
 pub func Pump(wait_ms: int, max_gap: i64):
-    count := _sessions.len()
+    mut count := 0
+    mut k := 0
+    while k < _sessions.len():
+        if _sessions.get(k).p != null: count = count + 1 end
+        k = k + 1
+    end
+
     if count == 0:
         // Nothing to read: wait the turn out rather than handing the caller
         // an instant return, which would spin its loop at full speed for as
@@ -636,8 +670,8 @@ pub func Pump(wait_ms: int, max_gap: i64):
     if share < 5: share = 5 end
 
     mut i := 0
-    while i < count:
-        PumpOne(i, share, max_gap)
+    while i < _sessions.len():
+        if _sessions.get(i).p != null: PumpOne(i, share, max_gap) end
         i = i + 1
     end
 end
@@ -648,13 +682,12 @@ pub func CloseIdle(idle_ttl: i64):
     mut i := 0
     while i < _sessions.len():
         s := _sessions.get(i)
-        if s.holders == 0 && s.idle_since > 0.0 && now - s.idle_since > (idle_ttl as f64):
+        if s.p != null && s.holders == 0 && s.idle_since > 0.0 && now - s.idle_since > (idle_ttl as f64):
             Log("closing idle session " + s.mode + "/" + s.symbol)
             socketio.Close(ClientOf(s))
-            _sessions.remove_at(i)
-        else:
-            i = i + 1
+            _sessions.set(i, Session {})
         end
+        i = i + 1
     end
 end
 
@@ -663,25 +696,53 @@ pub func ResetMode(mode: str):
     mut i := 0
     while i < _sessions.len():
         s := _sessions.get(i)
-        if s.mode == mode:
+        if s.p != null && s.mode == mode:
             socketio.Close(ClientOf(s))
-            _sessions.remove_at(i)
-        else:
-            i = i + 1
+            _sessions.set(i, Session {})
         end
+        i = i + 1
     end
 end
 
 pub func CloseAll():
     mut i := 0
     while i < _sessions.len():
-        socketio.Close(ClientOf(_sessions.get(i)))
+        s := _sessions.get(i)
+        if s.p != null: socketio.Close(ClientOf(s)) end
+        _sessions.set(i, Session {})
         i = i + 1
     end
-    _sessions.clear()
 end
 
-// The assets one account can trade, as the broker last listed them.
+/*
+ * The balance last reported for this account, from whichever of its sockets
+ * heard it.
+ *
+ * The broker sends the balance to every authenticated socket, not only to a
+ * control session, so an order watching one symbol knows it too. Returns
+ * false when no session of this account has been told yet.
+ */
+pub func CachedBalance(mode: str, balance &: f64): bool:
+    balance = 0.0
+    mut i := 0
+    while i < _sessions.len():
+        s := _sessions.get(i)
+        if s.p != null && s.mode == mode && s.has_balance:
+            balance = s.balance
+            ret true
+        end
+        i = i + 1
+    end
+    ret false
+end
+
+/*
+ * The assets one account can trade, as the broker last listed them.
+ *
+ * This is the package's own vector, handed out by reference: read it, copy
+ * what you need out of it, and never free it. The next asset frame replaces
+ * it and frees the old one.
+ */
 pub func Assets(mode: str): Vector<symbols.Asset>:
     if mode == types.MODE_DEMO: ret _demo_assets end
     ret _real_assets
@@ -787,6 +848,7 @@ pub func PlaceOrder(index: int, amount: f64, direction: str, duration_seconds: i
                 if reason.len() == 0: reason = jsonx.Unquote(jsonx.Field(payload, "message")) end
                 if reason.len() == 0: reason = "the broker refused the order" end
                 ack.error = reason
+                ack.refused = true
                 socketio.EventFree(ev)
                 ret ack
             end

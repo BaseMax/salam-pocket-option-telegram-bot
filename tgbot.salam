@@ -133,13 +133,14 @@ func ModeArg(raw: str): str:
     ret settings.Mode()
 end
 
+// Notifications carry the account balance when the user wants them to. Any
+// authenticated socket of that account knows it, not only a control session,
+// which is why this asks the broker rather than looking one up by name.
 func BalanceSuffix(text: str, mode: str): str:
     if !settings.NotifyBalance(): ret text end
-    idx := broker.Find(mode, "")
-    if idx < 0: ret text end
-    s := broker.Get(idx)
-    if !s.has_balance: ret text end
-    ret texts.WithBalance(text, s.balance, true)
+    mut balance := 0.0
+    if !broker.CachedBalance(mode, balance): ret text end
+    ret texts.WithBalance(text, balance, true)
 end
 
 // A draft seeded with the user's stored defaults.
@@ -443,11 +444,22 @@ func CmdStatus(chat_id: i64):
     text = text + "سفارش‌های فعال شما: <b>" + str.FromInt(store.CountActiveByChat(chat_id)) + "</b>\n"
     text = text + "حساب پیش‌فرض: " + texts.AccountLabel(settings.Mode()) + "\n\n"
 
-    if broker.Count() == 0:
+    mut live := 0
+    mut k := 0
+    while k < broker.Count():
+        if broker.IsLive(k): live = live + 1 end
+        k = k + 1
+    end
+
+    if live == 0:
         text = text + "هیچ نشست زنده‌ای باز نیست."
     else:
         mut i := 0
         while i < broker.Count():
+            if !broker.IsLive(i):
+                i = i + 1
+                continue
+            end
             s := broker.Get(i)
             mut state := "🔴 قطع"
             if s.ready: state = "🟢 متصل" end
