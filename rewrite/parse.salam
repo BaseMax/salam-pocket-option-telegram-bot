@@ -1,0 +1,192 @@
+// Reading what the user typed: the one-line /order command, and every word
+// that names a choice. Persian and English spellings are equal citizens.
+package parse
+
+import str
+import types "types.salam"
+import timex "timex.salam"
+import symbols "symbols.salam"
+
+// ParseNumber says this when the text is not a number.
+pub const NOT_A_NUMBER := 0.0 - 1000000000.0
+
+// Lower-cases and unifies the Persian letter shapes so an alias matches
+// however it was typed.
+pub func NormalizeWord(raw: str): str:
+    mut s := str.Trim(str.Lower(raw))
+    s = str.Replace(s, "‌", "")
+    s = str.Replace(s, "‎", "")
+    s = str.Replace(s, "‏", "")
+    s = str.Replace(s, "ي", "ی")
+    s = str.Replace(s, "ك", "ک")
+    ret s
+end
+
+// A number in either digit set, with thousands separators forgiven.
+pub func ParseNumber(raw: str): f64:
+    mut s := str.ToEnglishDigits(str.Trim(raw))
+    s = str.Replace(s, ",", "")
+    s = str.Replace(s, " ", "")
+    s = str.Replace(s, "٬", "")
+    s = str.Replace(s, "٫", ".")
+    if s.len() == 0: ret NOT_A_NUMBER end
+
+    mut i := 0
+    mut digits := 0
+    mut dots := 0
+    while i < s.len():
+        c := s.substr(i, 1)
+        if c == "-" || c == "+":
+            if i != 0: ret NOT_A_NUMBER end
+        else c == ".":
+            dots = dots + 1
+            if dots > 1: ret NOT_A_NUMBER end
+        else c >= "0" && c <= "9":
+            digits = digits + 1
+        else:
+            ret NOT_A_NUMBER
+        end
+        i = i + 1
+    end
+    if digits == 0: ret NOT_A_NUMBER end
+    ret str.ToFloat(s)
+end
+
+pub func IsNumber(value: f64): bool:
+    ret value != NOT_A_NUMBER
+end
+
+// buy / خرید / call / up …
+pub func Direction(raw: str): str:
+    w := NormalizeWord(raw)
+    if w == "buy" || w == "call" || w == "up" || w == "long" || w == "خرید" || w == "بالا" || w == "صعودی": ret types.CALL end
+    if w == "sell" || w == "put" || w == "down" || w == "short" || w == "فروش" || w == "پایین" || w == "نزولی": ret types.PUT end
+    ret ""
+end
+
+pub func TriggerMode(raw: str): str:
+    w := NormalizeWord(raw)
+    if w == "touch" || w == "now" || w == "instant" || w == "لحظهای" || w == "لحظه" || w == "برخورد": ret types.TRIGGER_TOUCH end
+    if w == "next" || w == "next_candle" || w == "candle" || w == "بعدی" || w == "کندلبعدی": ret types.TRIGGER_NEXT_CANDLE end
+    ret ""
+end
+
+pub func ExpiryMode(raw: str): str:
+    w := NormalizeWord(raw)
+    if w == "fixed" || w == "static" || w == "ثابت": ret types.EXPIRY_FIXED end
+    if w == "float" || w == "floating" || w == "candle" || w == "شناور": ret types.EXPIRY_FLOATING end
+    ret ""
+end
+
+pub func ChartType(raw: str): str:
+    w := NormalizeWord(raw)
+    if w == "candle" || w == "candles" || w == "ohlc" || w == "japanese" || w == "کندل" || w == "کندلی" || w == "شمعی": ret types.CHART_CANDLE end
+    if w == "ha" || w == "heikin" || w == "heikin_ashi" || w == "heikinashi" || w == "heikin-ashi" || w == "هایکن" || w == "هایکنآشی": ret types.CHART_HEIKIN_ASHI end
+    if w == "line" || w == "area" || w == "خطی": ret types.CHART_LINE end
+    ret ""
+end
+
+pub func AccountMode(raw: str): str:
+    w := NormalizeWord(raw)
+    if w == "demo" || w == "practice" || w == "دمو" || w == "آزمایشی" || w == "تمرینی": ret types.MODE_DEMO end
+    if w == "real" || w == "live" || w == "ریل" || w == "واقعی": ret types.MODE_REAL end
+    ret ""
+end
+
+pub func OnOff(raw: str): str:
+    w := NormalizeWord(raw)
+    if w == "on" || w == "true" || w == "1" || w == "yes" || w == "روشن" || w == "بله": ret "on" end
+    if w == "off" || w == "false" || w == "0" || w == "no" || w == "خاموش" || w == "نه": ret "off" end
+    ret ""
+end
+
+/*
+ * Reads the one-line form: `SYMBOL buy|sell PRICE [key=value …]`.
+ *
+ * Anything the tail leaves alone keeps the value it had in `spec`, which is
+ * how the user's stored defaults reach an order. Returns "" on success, or
+ * the Persian complaint to show.
+ */
+pub func ParseOrder(args: str, spec &: types.OrderSpec): str:
+    mut words := str.Fields(str.Trim(args))
+    defer words.free()
+    if words.len() < 3:
+        ret "ساختار درست: /order SYMBOL buy|sell PRICE [tf=1m dur=60 amount=1 ...]"
+    end
+
+    symbol := symbols.Normalize(words.get(0))
+    if symbol.len() < 3: ret "نماد نامعتبر است: " + words.get(0) end
+
+    direction := Direction(words.get(1))
+    if direction.len() == 0: ret "جهت معامله نامعتبر است: " + words.get(1) end
+
+    price := ParseNumber(words.get(2))
+    if !IsNumber(price) || price <= 0.0: ret "قیمت نامعتبر است: " + words.get(2) end
+
+    spec.symbol = symbol
+    spec.direction = direction
+    spec.trigger_price = price
+
+    mut i := 3
+    while i < words.len():
+        token := words.get(i)
+        i = i + 1
+
+        eq := str.IndexOf(token, "=")
+        if eq < 0: ret "پارامتر نامعتبر: " + token + " (باید به شکل key=value باشد)" end
+        key := NormalizeWord(token.substr(0, eq))
+        value := token.substr(eq + 1, token.len() - eq - 1)
+
+        if key == "tf" || key == "timeframe":
+            seconds := timex.ParseDuration(value)
+            if seconds == timex.INVALID: ret "تایم‌فریم نامعتبر: " + value end
+            spec.timeframe_seconds = seconds
+
+        else key == "dur" || key == "duration" || key == "time":
+            seconds := timex.ParseDuration(value)
+            if seconds == timex.INVALID: ret "مدت معامله نامعتبر: " + value end
+            spec.duration_seconds = seconds
+            spec.expiry_mode = types.EXPIRY_FIXED
+
+        else key == "candles" || key == "candle":
+            count := ParseNumber(value)
+            if !IsNumber(count) || count < 1.0: ret "تعداد کندل نامعتبر: " + value end
+            spec.candle_count = (count + 0.5) as i64
+            spec.expiry_mode = types.EXPIRY_FLOATING
+
+        else key == "amount" || key == "amt":
+            amount := ParseNumber(value)
+            if !IsNumber(amount) || amount <= 0.0: ret "مبلغ نامعتبر: " + value end
+            spec.amount = amount
+
+        else key == "valid" || key == "ttl":
+            seconds := timex.ParseDuration(value)
+            if seconds == timex.INVALID: ret "مدت اعتبار نامعتبر: " + value end
+            spec.valid_for_seconds = seconds
+
+        else key == "entry" || key == "trigger":
+            mode := TriggerMode(value)
+            if mode.len() == 0: ret "نحوهٔ ورود نامعتبر (touch یا next): " + value end
+            spec.trigger_mode = mode
+
+        else key == "exp" || key == "expiry":
+            mode := ExpiryMode(value)
+            if mode.len() == 0: ret "نوع انقضا نامعتبر (fixed یا float): " + value end
+            spec.expiry_mode = mode
+
+        else key == "chart":
+            chart := ChartType(value)
+            if chart.len() == 0: ret "نوع چارت نامعتبر: " + value end
+            spec.chart_type = chart
+
+        else key == "acc" || key == "account":
+            account := AccountMode(value)
+            if account.len() == 0: ret "نوع حساب نامعتبر (demo یا real): " + value end
+            spec.account_mode = account
+
+        else:
+            ret "پارامتر ناشناخته: " + key
+        end
+    end
+    ret ""
+end

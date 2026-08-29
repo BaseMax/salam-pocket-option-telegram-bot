@@ -1,0 +1,900 @@
+/*
+ * The Telegram side: commands in, notifications out.
+ *
+ * Nothing here knows how a trade works; it asks the engine and renders what
+ * comes back. The single loop in main.salam calls Poll() and Notify().
+ */
+package tgbot
+
+import str
+import time
+import telegram.bot
+import encoding.json
+import types "types.salam"
+import store "store.salam"
+import config "config.salam"
+import settings "settings.salam"
+import engine "engine.salam"
+import broker "broker.salam"
+import symbols "symbols.salam"
+import texts "texts.salam"
+import timex "timex.salam"
+import parse "parse.salam"
+import tgapi "tgapi.salam"
+import wizard "wizard.salam"
+import ssid "ssid.salam"
+
+mut _config := config.Config {}
+mut _bot := bot.Bot {}
+mut _offset := 0 as i64
+mut _ready := false
+
+func Admins(): Vector<str>:
+    ret str.Split(_config.admin_ids, ",")
+end
+
+// Who may drive this bot: the environment's admin list plus whoever claimed
+// an unconfigured bot with the first /start.
+func Allowed(chat_id: i64): bool:
+    mut list := Admins()
+    defer list.free()
+
+    mut configured := false
+    mut i := 0
+    while i < list.len():
+        entry := str.Trim(list.get(i))
+        if entry.len() > 0:
+            configured = true
+            if entry == str.FromInt(chat_id): ret true end
+        end
+        i = i + 1
+    end
+
+    if settings.IsOwner(chat_id): ret true end
+    if !configured && settings.Owners().len() == 0:
+        settings.AddOwner(chat_id)
+        println "[telegram] chat " + str.FromInt(chat_id) + " claimed ownership of this bot"
+        ret true
+    end
+    ret false
+end
+
+// Everyone who should hear a service-wide notice.
+func Recipients(): Vector<i64>:
+    mut out := Vector {} as Vector<i64>
+    mut list := Admins()
+    defer list.free()
+    mut i := 0
+    while i < list.len():
+        entry := str.Trim(list.get(i))
+        if entry.len() > 0: out.push(str.ToInt(entry) as i64) end
+        i = i + 1
+    end
+
+    owners := settings.Owners()
+    if owners.len() > 0:
+        mut parts := owners.split(",")
+        defer parts.free()
+        mut k := 0
+        while k < parts.len():
+            id := str.ToInt(str.Trim(parts.get(k))) as i64
+            mut seen := false
+            mut j := 0
+            while j < out.len():
+                if out.get(j) == id: seen = true end
+                j = j + 1
+            end
+            if !seen && id != 0: out.push(id) end
+            k = k + 1
+        end
+    end
+    ret out
+end
+
+func Broadcast(text: str):
+    mut who := Recipients()
+    defer who.free()
+    mut i := 0
+    while i < who.len():
+        _m := tgapi.Send(_bot, who.get(i), text, "")
+        i = i + 1
+    end
+end
+
+func GuideKeyboard(): str:
+    mut k := tgapi.NewKeyboard()
+    tgapi.Button(k, "📈 کندلی یا هایکن‌آشی؟", "h:chart")
+    tgapi.Row(k)
+    tgapi.Button(k, "⏱ نوشتن زمان و مدت", "h:time")
+    tgapi.Row(k)
+    tgapi.Button(k, "🎯 ورود، انقضا و اعتبار", "h:trade")
+    tgapi.Row(k)
+    tgapi.Button(k, "🧭 فهرست دستورها", "h:commands")
+    tgapi.Button(k, "🔑 ثبت نشست", "h:session")
+    ret tgapi.KeyboardJson(k)
+end
+
+func BackKeyboard(): str:
+    mut k := tgapi.NewKeyboard()
+    tgapi.Button(k, "« بازگشت به راهنما", "h:home")
+    ret tgapi.KeyboardJson(k)
+end
+
+func CancelKeyboard(order_id: str): str:
+    mut k := tgapi.NewKeyboard()
+    tgapi.Button(k, "❌ لغو این سفارش", "c:" + order_id)
+    ret tgapi.KeyboardJson(k)
+end
+
+// The account a command should act on: the one it names, else the default.
+func ModeArg(raw: str): str:
+    mode := parse.AccountMode(raw)
+    if mode.len() > 0: ret mode end
+    ret settings.Mode()
+end
+
+func BalanceSuffix(text: str, mode: str): str:
+    if !settings.NotifyBalance(): ret text end
+    idx := broker.Find(mode, "")
+    if idx < 0: ret text end
+    s := broker.Get(idx)
+    if !s.has_balance: ret text end
+    ret texts.WithBalance(text, s.balance, true)
+end
+
+// A draft seeded with the user's stored defaults.
+func FreshDraft(): wizard.Draft:
+    mut d := wizard.Draft {}
+    d.direction = types.CALL
+    d.trigger_mode = settings.Entry()
+    d.expiry_mode = settings.Expiry()
+    d.chart_type = settings.Chart()
+    d.account_mode = settings.Mode()
+    d.timeframe_seconds = settings.Timeframe()
+    d.duration_seconds = settings.Duration()
+    d.candle_count = settings.Candles()
+    d.amount = settings.Amount()
+    d.valid_for_seconds = 0 as i64
+    ret d
+end
+
+func SpecDefaults(): types.OrderSpec:
+    mut spec := types.OrderSpec {}
+    spec.trigger_mode = settings.Entry()
+    spec.expiry_mode = settings.Expiry()
+    spec.chart_type = settings.Chart()
+    spec.account_mode = settings.Mode()
+    spec.timeframe_seconds = settings.Timeframe()
+    spec.duration_seconds = settings.Duration()
+    spec.candle_count = settings.Candles()
+    spec.amount = settings.Amount()
+    ret spec
+end
+
+// What the broker thinks of a symbol, in the Persian the user reads.
+// `problem` is set when the order cannot go ahead.
+func CheckSymbol(mode: str, raw: str, problem &: str, note &: str): str:
+    problem = ""
+    note = ""
+
+    mut assets := engine.Assets(mode, 6000 as i64)
+    if assets.len() == 0:
+        note = "⚠️ فهرست نمادها از کارگزار گرفته نشد، بدون بررسی ادامه می‌دهیم."
+        ret symbols.Normalize(raw)
+    end
+
+    mut status := ""
+    mut matched := symbols.Asset {}
+    mut twin := symbols.Asset {}
+    name := symbols.Resolve(raw, assets, status, matched, twin)
+
+    if status == "unknown":
+        mut suggestions := symbols.Suggest(name, assets)
+        defer suggestions.free()
+        mut text := "نماد <code>" + texts.EscapeHtml(name) + "</code> در فهرست کارگزار نیست."
+        if suggestions.len() > 0:
+            text = text + "\n\nشاید یکی از این‌ها باشد:"
+            mut i := 0
+            while i < suggestions.len():
+                text = text + "\n• " + texts.AssetLine(suggestions.get(i))
+                i = i + 1
+            end
+        else:
+            text = text + "\nبا <code>/symbols &lt;بخشی از نام&gt;</code> جست‌وجو کنید."
+        end
+        problem = text
+        ret name
+    end
+
+    if status == "corrected":
+        note = "✅ نماد اصلاح شد به " + texts.AssetLine(matched)
+    end
+    if !matched.is_open:
+        if note.len() > 0: note = note + "\n" end
+        note = note + "🔴 بازار این نماد الان بسته است؛ سفارش تا باز شدن بازار منتظر می‌ماند."
+        if twin.symbol.len() > 0 && twin.is_open:
+            note = note + "\nنسخهٔ باز: " + texts.AssetLine(twin)
+        end
+    end
+    ret matched.symbol
+end
+
+// Validates, registers and confirms one order, whatever screen it came from.
+func SubmitOrder(chat_id: i64, spec: types.OrderSpec):
+    problem := config.CheckLimits(_config, spec.amount, spec.expiry_mode, spec.duration_seconds,
+        spec.timeframe_seconds, spec.candle_count)
+    if problem.len() > 0:
+        tgapi.Warn(_bot, chat_id, problem)
+        ret
+    end
+
+    if !settings.HasCredentials(spec.account_mode):
+        tgapi.Warn(_bot, chat_id, "برای حساب " + texts.AccountLabel(spec.account_mode) +
+            " هنوز نشستی ثبت نشده است.\nبا دستور <code>/session " + spec.account_mode + " &lt;SSID&gt;</code> آن را ثبت کنید.")
+        ret
+    end
+
+    notice := tgapi.Notice(_bot, chat_id, "⏳ در حال بررسی نماد و ثبت سفارش…")
+
+    mut symbol_problem := ""
+    mut symbol_note := ""
+    symbol := CheckSymbol(spec.account_mode, spec.symbol, symbol_problem, symbol_note)
+    if symbol_problem.len() > 0:
+        tgapi.Finish(_bot, chat_id, notice, "⚠️ " + symbol_problem)
+        ret
+    end
+
+    mut o := types.Order {}
+    o.chat_id = chat_id
+    o.account_mode = spec.account_mode
+    o.symbol = symbol
+    o.direction = spec.direction
+    o.trigger_price = spec.trigger_price
+    o.trigger_mode = spec.trigger_mode
+    o.amount = spec.amount
+    o.expiry_mode = spec.expiry_mode
+    o.duration_seconds = spec.duration_seconds
+    o.candle_count = spec.candle_count
+    o.timeframe_seconds = spec.timeframe_seconds
+    o.chart_type = spec.chart_type
+    if spec.valid_for_seconds > 0:
+        o.valid_until = timex.NowSeconds() + (spec.valid_for_seconds as f64)
+    end
+
+    saved := engine.CreateOrder(o)
+    mut text := "✅ <b>سفارش ثبت شد</b>\n\n" + texts.RenderOrder(saved, _config.timezone_offset, false) + "\n\n"
+    if symbol_note.len() > 0: text = text + symbol_note + "\n\n" end
+    text = text + "از این لحظه قیمت لحظه‌ای <b>" + texts.EscapeHtml(saved.symbol) + "</b> زنده دنبال می‌شود."
+
+    if notice != 0:
+        if !tgapi.Edit(_bot, chat_id, notice, text, CancelKeyboard(saved.id)):
+            _m := tgapi.Send(_bot, chat_id, text, CancelKeyboard(saved.id))
+        end
+    else:
+        _m := tgapi.Send(_bot, chat_id, text, CancelKeyboard(saved.id))
+    end
+end
+
+func CancelReason(reason: str): str:
+    if reason == "already_open": ret "این معامله باز شده و در باینری آپشن امکان بستن زودهنگام وجود ندارد." end
+    if reason == "not_found": ret "سفارشی با این کد پیدا نشد." end
+    ret "این سفارش دیگر فعال نیست."
+end
+
+func CmdList(chat_id: i64):
+    mut active := store.ListActiveByChat(chat_id)
+    defer active.free()
+    if active.len() == 0:
+        _m := tgapi.Send(_bot, chat_id, "سفارش فعالی ندارید. با /new یکی بسازید.", "")
+        ret
+    end
+
+    mut i := 0
+    while i < active.len():
+        o := active.get(i)
+        mut text := texts.RenderOrder(o, _config.timezone_offset, false)
+        idx := broker.Find(o.account_mode, o.symbol)
+        if idx >= 0:
+            s := broker.Get(idx)
+            if s.has_price: text = text + "\nقیمت لحظه‌ای: <code>" + timex.FormatPrice(s.price) + "</code>" end
+        end
+        mut markup := ""
+        if types.IsCancellable(o.status): markup = CancelKeyboard(o.id) end
+        _m := tgapi.Send(_bot, chat_id, text, markup)
+        i = i + 1
+    end
+end
+
+func CmdHistory(chat_id: i64):
+    mut recent := store.ListRecentByChat(chat_id, 15 as i64)
+    defer recent.free()
+    if recent.len() == 0:
+        _m := tgapi.Send(_bot, chat_id, "هنوز سفارشی ثبت نشده است.", "")
+        ret
+    end
+
+    mut text := "🗂 <b>آخرین سفارش‌ها</b>\n"
+    mut i := 0
+    while i < recent.len():
+        o := recent.get(i)
+        text = text + "\n" + texts.Headline(o) + "\n   " + texts.StatusLabel(o.status)
+        if o.has_profit: text = text + " · " + timex.FormatMoney(o.profit) end
+        text = text + " · " + timex.FormatTime(o.created_at, _config.timezone_offset)
+        i = i + 1
+    end
+    _m := tgapi.Send(_bot, chat_id, text, "")
+end
+
+func CmdStats(chat_id: i64):
+    mut won := 0 as i64
+    mut lost := 0 as i64
+    mut draw := 0 as i64
+    mut profit := 0.0
+    store.Summary(chat_id, timex.NowSeconds() - 86400.0, won, lost, draw, profit)
+
+    total := won + lost + draw
+    mut rate := 0 as i64
+    if total > 0: rate = (won * 100 as i64) / total end
+
+    text := "📊 <b>آمار ۲۴ ساعت گذشته</b>\n\n" +
+        "برد: <b>" + str.FromInt(won) + "</b> · باخت: <b>" + str.FromInt(lost) + "</b> · مساوی: <b>" + str.FromInt(draw) + "</b>\n" +
+        "نرخ برد: <b>" + str.FromInt(rate) + "%</b>\n" +
+        "سود/زیان خالص: <b>" + timex.FormatMoney(profit) + "</b>"
+    _m := tgapi.Send(_bot, chat_id, text, "")
+end
+
+func CmdBalance(chat_id: i64, args: str):
+    mode := ModeArg(args)
+    if !settings.HasCredentials(mode):
+        _m := tgapi.Send(_bot, chat_id, "برای حساب " + texts.AccountLabel(mode) + " نشستی ثبت نشده است.", "")
+        ret
+    end
+    notice := tgapi.Notice(_bot, chat_id, "⏳ در حال خواندن موجودی…")
+    balance := engine.Balance(mode, 8000 as i64)
+    if balance == 0.0:
+        tgapi.Finish(_bot, chat_id, notice, "⚠️ موجودی دریافت نشد. اتصال را با /status بررسی کنید.")
+        ret
+    end
+    tgapi.Finish(_bot, chat_id, notice, "💵 موجودی حساب " + texts.AccountLabel(mode) + ": <b>" + timex.FormatMoney(balance) + "</b>")
+end
+
+func CmdPrice(chat_id: i64, args: str):
+    mut words := str.Fields(str.Trim(args))
+    defer words.free()
+    if words.len() == 0:
+        _m := tgapi.Send(_bot, chat_id, "نماد را بدهید. مثال: <code>/price GBPAUD_otc</code>", "")
+        ret
+    end
+
+    mut mode := settings.Mode()
+    if words.len() > 1: mode = ModeArg(words.get(1)) end
+    notice := tgapi.Notice(_bot, chat_id, "⏳ در حال بررسی " + texts.EscapeHtml(symbols.Normalize(words.get(0))) + "…")
+
+    mut problem := ""
+    mut note := ""
+    symbol := CheckSymbol(mode, words.get(0), problem, note)
+    if problem.len() > 0:
+        tgapi.Finish(_bot, chat_id, notice, "⚠️ " + problem)
+        ret
+    end
+
+    price := engine.Price(mode, symbol, 8000 as i64)
+    if price == 0.0:
+        tgapi.Finish(_bot, chat_id, notice, "⚠️ قیمتی برای <b>" + texts.EscapeHtml(symbol) + "</b> دریافت نشد. باز بودن بازار را بررسی کنید.")
+        ret
+    end
+    tgapi.Finish(_bot, chat_id, notice, "💹 <b>" + texts.EscapeHtml(symbol) + "</b> (" + texts.AccountLabel(mode) + "): <code>" + timex.FormatPrice(price) + "</code>")
+end
+
+func CmdSymbols(chat_id: i64, args: str):
+    query := str.Trim(args)
+    mode := settings.Mode()
+    notice := tgapi.Notice(_bot, chat_id, "⏳ در حال گرفتن فهرست نمادها…")
+
+    mut assets := engine.Assets(mode, 8000 as i64)
+    if assets.len() == 0:
+        tgapi.Finish(_bot, chat_id, notice, "⚠️ کارگزار فهرست نمادها را نفرستاد.")
+        ret
+    end
+
+    mut matched := Vector {} as Vector<symbols.Asset>
+    defer matched.free()
+    if query.len() == 0:
+        mut i := 0
+        while i < assets.len():
+            a := assets.get(i)
+            if a.is_open: matched.push(a) end
+            i = i + 1
+        end
+    else:
+        mut found := symbols.Suggest(symbols.Normalize(query), assets)
+        mut i := 0
+        while i < found.len():
+            matched.push(found.get(i))
+            i = i + 1
+        end
+        found.free()
+    end
+
+    mut header := "نمادهای باز حساب " + texts.AccountLabel(mode)
+    if query.len() > 0: header = "نتیجهٔ جست‌وجوی <code>" + texts.EscapeHtml(query) + "</code>" end
+    header = header + " (" + str.FromInt(matched.len() as i64) + " مورد)"
+
+    mut body := "چیزی پیدا نشد."
+    if matched.len() > 0:
+        body = ""
+        mut shown := matched.len()
+        if shown > 30: shown = 30 end
+        mut i := 0
+        while i < shown:
+            if i > 0: body = body + "\n" end
+            body = body + "• " + texts.AssetLine(matched.get(i))
+            i = i + 1
+        end
+        if matched.len() > shown:
+            body = body + "\n\n… و " + str.FromInt((matched.len() - shown) as i64) + " مورد دیگر."
+        end
+    end
+    tgapi.Finish(_bot, chat_id, notice, "📋 <b>" + header + "</b>\n\n" + body)
+end
+
+func CmdStatus(chat_id: i64):
+    mut text := "📡 <b>وضعیت سرویس</b>\n\n"
+    text = text + "سفارش‌های فعال شما: <b>" + str.FromInt(store.CountActiveByChat(chat_id)) + "</b>\n"
+    text = text + "حساب پیش‌فرض: " + texts.AccountLabel(settings.Mode()) + "\n\n"
+
+    if broker.Count() == 0:
+        text = text + "هیچ نشست زنده‌ای باز نیست."
+    else:
+        mut i := 0
+        while i < broker.Count():
+            s := broker.Get(i)
+            mut state := "🔴 قطع"
+            if s.ready: state = "🟢 متصل" end
+            mut key := s.mode + ":*"
+            if s.symbol.len() > 0: key = s.mode + ":" + s.symbol end
+            text = text + "<b>" + texts.EscapeHtml(key) + "</b> · " + state + "\n"
+            mut price := "-"
+            if s.has_price: price = timex.FormatPrice(s.price) end
+            text = text + "   قیمت: <code>" + price + "</code> · سفارش‌های وابسته: " + str.FromInt(s.holders) + "\n"
+            text = text + "   موجودی: " + timex.FormatMoney(s.balance) + " · اختلاف ساعت سرور: " + str.FromInt(s.time_offset) + "s\n\n"
+            i = i + 1
+        end
+    end
+    _m := tgapi.Send(_bot, chat_id, text, "")
+end
+
+func CmdSettings(chat_id: i64):
+    mut text := "⚙️ <b>تنظیمات پیش‌فرض</b>\n\n"
+    text = text + "<code>mode</code> حساب: " + texts.AccountLabel(settings.Mode()) + "\n"
+    text = text + "<code>amount</code> مبلغ: " + timex.FormatMoney(settings.Amount()) + "\n"
+    text = text + "<code>tf</code> تایم‌فریم: " + timex.TimeframeLabel(settings.Timeframe()) + "\n"
+    text = text + "<code>dur</code> مدت ثابت: " + timex.FormatDuration(settings.Duration()) + "\n"
+    text = text + "<code>candles</code> تعداد کندل: " + str.FromInt(settings.Candles()) + "\n"
+    text = text + "<code>chart</code> نوع چارت: " + texts.ChartLabel(settings.Chart()) + "\n"
+    text = text + "<code>entry</code> نحوهٔ ورود: " + texts.TriggerLabel(settings.Entry()) + "\n"
+    text = text + "<code>expiry</code> نوع انقضا: " + texts.ExpiryLabel(settings.Expiry()) + "\n"
+    mut notify := "خاموش"
+    if settings.NotifyBalance(): notify = "روشن" end
+    text = text + "<code>balance</code> نمایش موجودی در اعلان‌ها: " + notify + "\n\n"
+
+    mut demo := "❌ ثبت نشده"
+    if settings.HasCredentials(types.MODE_DEMO): demo = "✅ ثبت شده" end
+    mut real := "❌ ثبت نشده"
+    if settings.HasCredentials(types.MODE_REAL): real = "✅ ثبت شده" end
+    text = text + "نشست دمو: " + demo + "\nنشست ریل: " + real + "\n\n"
+    text = text + "تغییر: <code>/set amount 5</code> · <code>/set tf 1m</code> · <code>/set balance off</code>"
+    _m := tgapi.Send(_bot, chat_id, text, "")
+end
+
+func CmdSet(chat_id: i64, args: str):
+    mut words := str.Fields(str.Trim(args))
+    defer words.free()
+    if words.len() < 2:
+        _m := tgapi.Send(_bot, chat_id, "ساختار: <code>/set &lt;کلید&gt; &lt;مقدار&gt;</code>؛ کلیدها را با /settings ببینید.", "")
+        ret
+    end
+
+    key := parse.NormalizeWord(words.get(0))
+    mut value := words.get(1)
+    mut i := 2
+    while i < words.len():
+        value = value + " " + words.get(i)
+        i = i + 1
+    end
+
+    mut problem := ""
+    if key == "mode" || key == "account":
+        mode := parse.AccountMode(value)
+        if mode.len() == 0: problem = "فقط demo یا real." else: settings.SetMode(mode) end
+
+    else key == "amount":
+        amount := parse.ParseNumber(value)
+        if !parse.IsNumber(amount) || amount <= 0.0: problem = "مبلغ نامعتبر."
+        else: settings.SetAmount(amount)
+        end
+
+    else key == "tf" || key == "timeframe":
+        seconds := timex.ParseDuration(value)
+        if seconds == timex.INVALID: problem = "تایم‌فریم نامعتبر.\n\n" + texts.TimeFormatHint()
+        else: settings.SetTimeframe(seconds)
+        end
+
+    else key == "dur" || key == "duration":
+        seconds := timex.ParseDuration(value)
+        if seconds == timex.INVALID: problem = "مدت نامعتبر.\n\n" + texts.TimeFormatHint()
+        else: settings.SetDuration(seconds)
+        end
+
+    else key == "candles":
+        count := parse.ParseNumber(value)
+        if !parse.IsNumber(count) || count < 1.0: problem = "تعداد کندل نامعتبر."
+        else: settings.SetCandles((count + 0.5) as i64)
+        end
+
+    else key == "chart":
+        chart := parse.ChartType(value)
+        if chart.len() == 0: problem = "نوع چارت نامعتبر (candle / ha / line)." else: settings.SetChart(chart) end
+
+    else key == "entry":
+        mode := parse.TriggerMode(value)
+        if mode.len() == 0: problem = "نحوهٔ ورود نامعتبر (touch / next)." else: settings.SetEntry(mode) end
+
+    else key == "expiry":
+        mode := parse.ExpiryMode(value)
+        if mode.len() == 0: problem = "نوع انقضا نامعتبر (fixed / float)." else: settings.SetExpiry(mode) end
+
+    else key == "balance":
+        on_off := parse.OnOff(value)
+        if on_off.len() == 0: problem = "فقط on یا off." else: settings.SetNotifyBalance(on_off) end
+
+    else:
+        problem = "کلید ناشناخته: " + texts.EscapeHtml(key)
+    end
+
+    if problem.len() > 0:
+        tgapi.Warn(_bot, chat_id, problem)
+    else:
+        _m := tgapi.Send(_bot, chat_id, "✅ ذخیره شد.", "")
+    end
+end
+
+func CmdSession(chat_id: i64, args: str, message_id: i64):
+    raw := str.Trim(args)
+    space := str.IndexOf(raw, " ")
+    mut mode := ""
+    mut payload := ""
+    if space > 0:
+        mode = parse.AccountMode(raw.substr(0, space))
+        payload = str.Trim(raw.substr(space + 1, raw.len() - space - 1))
+    end
+
+    if mode.len() == 0 || payload.len() == 0:
+        _m := tgapi.Send(_bot, chat_id, texts.SessionHelp(), "")
+        ret
+    end
+
+    // The message carries a credential; it should not sit in the history.
+    tgapi.Delete(_bot, chat_id, message_id)
+
+    auth := ssid.Parse(payload, mode, settings.Uid(mode))
+    if !auth.ok:
+        _m := tgapi.Send(_bot, chat_id, "⚠️ SSID خوانده نشد: " + texts.EscapeHtml(auth.error) + "\n\n" + texts.SessionHelp(), "")
+        ret
+    end
+
+    settings.SetCredentials(mode, payload, auth.uid)
+    broker.SetCredentials(mode, auth)
+    engine.ReloadCredentials(mode)
+
+    notice := tgapi.Notice(_bot, chat_id, "⏳ نشست حساب " + texts.AccountLabel(mode) + " ذخیره شد (uid: " + str.FromInt(auth.uid) + "). در حال تست اتصال…")
+    balance := engine.Balance(mode, 12000 as i64)
+    if balance == 0.0:
+        tgapi.Finish(_bot, chat_id, notice, "⚠️ اتصال برقرار شد اما موجودی نیامد. با /status وضعیت را ببینید و اگر لازم بود SSID تازه بفرستید.")
+        ret
+    end
+    tgapi.Finish(_bot, chat_id, notice, "✅ اتصال به حساب " + texts.AccountLabel(mode) + " برقرار شد.\nموجودی: <b>" +
+        timex.FormatMoney(balance) + "</b>\nپیام حاوی SSID برای امنیت حذف شد.")
+end
+
+func CmdOrder(chat_id: i64, args: str):
+    text := str.Trim(args)
+    if text.len() == 0:
+        wizard.Open(_bot, chat_id, FreshDraft())
+        ret
+    end
+    mut spec := SpecDefaults()
+    problem := parse.ParseOrder(text, spec)
+    if problem.len() > 0:
+        tgapi.WarnEscaped(_bot, chat_id, problem)
+        ret
+    end
+    SubmitOrder(chat_id, spec)
+end
+
+func CmdCancel(chat_id: i64, args: str):
+    mut id := str.Upper(str.Trim(args))
+    id = str.Replace(id, "#", "")
+    if id.len() == 0:
+        _m := tgapi.Send(_bot, chat_id, "کد سفارش را بدهید. مثال: <code>/cancel A7K2</code>", "")
+        ret
+    end
+
+    o := store.Get(id)
+    if o.id.len() == 0 || o.chat_id != chat_id:
+        _m := tgapi.Send(_bot, chat_id, CancelReason("not_found"), "")
+        ret
+    end
+
+    reason := engine.Cancel(id)
+    if reason.len() == 0:
+        _m := tgapi.Send(_bot, chat_id, "⚪️ سفارش <b>#" + texts.EscapeHtml(id) + "</b> لغو شد.", "")
+    else:
+        _m := tgapi.Send(_bot, chat_id, CancelReason(reason), "")
+    end
+end
+
+func HandleCommand(chat_id: i64, message_id: i64, text: str):
+    command := bot.CommandName(text)
+    args := bot.CommandArgs(text)
+
+    // A command interrupts whatever the panel was waiting for.
+    wizard.AbortPrompt(_bot, chat_id)
+
+    if command == "start":
+        _m := tgapi.Send(_bot, chat_id, texts.Guide(), GuideKeyboard())
+    else command == "help":
+        _m := tgapi.Send(_bot, chat_id, texts.Help(), GuideKeyboard())
+    else command == "id":
+        _m := tgapi.Send(_bot, chat_id, "شناسهٔ این چت: <code>" + str.FromInt(chat_id) + "</code>", "")
+    else command == "new":
+        wizard.Open(_bot, chat_id, FreshDraft())
+    else command == "order":
+        CmdOrder(chat_id, args)
+    else command == "list":
+        CmdList(chat_id)
+    else command == "cancel":
+        CmdCancel(chat_id, args)
+    else command == "history":
+        CmdHistory(chat_id)
+    else command == "stats":
+        CmdStats(chat_id)
+    else command == "balance":
+        CmdBalance(chat_id, args)
+    else command == "price":
+        CmdPrice(chat_id, args)
+    else command == "symbols":
+        CmdSymbols(chat_id, args)
+    else command == "status":
+        CmdStatus(chat_id)
+    else command == "mode":
+        raw := str.Trim(args)
+        if raw.len() == 0:
+            _m := tgapi.Send(_bot, chat_id, "حساب پیش‌فرض فعلی: " + texts.AccountLabel(settings.Mode()) +
+                "\nبرای تغییر: <code>/mode demo</code> یا <code>/mode real</code>", "")
+        else:
+            mode := parse.AccountMode(raw)
+            if mode.len() == 0:
+                _m := tgapi.Send(_bot, chat_id, "فقط <code>demo</code> یا <code>real</code>.", "")
+            else:
+                settings.SetMode(mode)
+                mut warning := ""
+                if !settings.HasCredentials(mode):
+                    warning = "\n\n⚠️ هنوز برای این حساب نشستی ثبت نشده: <code>/session " + mode + " &lt;SSID&gt;</code>"
+                end
+                _m := tgapi.Send(_bot, chat_id, "حساب پیش‌فرض روی " + texts.AccountLabel(mode) + " تنظیم شد." + warning, "")
+            end
+        end
+    else command == "settings":
+        CmdSettings(chat_id)
+    else command == "set":
+        CmdSet(chat_id, args)
+    else command == "session":
+        CmdSession(chat_id, args, message_id)
+    else:
+        _m := tgapi.Send(_bot, chat_id, "دستور ناشناخته. /help را ببینید.", "")
+    end
+end
+
+func HandleCallback(chat_id: i64, query_id: str, data: str, message_id: i64, message_text: str):
+    if str.StartsWith(data, "w:"):
+        payload := data.substr(2, data.len() - 2)
+        if wizard.HandleTap(_bot, chat_id, payload, message_id, query_id, message_text) == "submit":
+            spec := wizard.Spec(chat_id)
+            wizard.Close(chat_id)
+            SubmitOrder(chat_id, spec)
+        end
+        ret
+    end
+
+    if str.StartsWith(data, "h:"):
+        topic := data.substr(2, data.len() - 2)
+        tgapi.Answer(_bot, query_id, "", false)
+        mut page := ""
+        mut markup := BackKeyboard()
+        if topic == "home":
+            page = texts.Guide()
+            markup = GuideKeyboard()
+        else topic == "chart": page = texts.ChartGuide()
+        else topic == "time": page = texts.TimeGuide()
+        else topic == "trade": page = texts.TradeGuide()
+        else topic == "commands": page = texts.Help()
+        else topic == "session": page = texts.SessionHelp()
+        end
+        if page.len() > 0: _e := tgapi.Edit(_bot, chat_id, message_id, page, markup) end
+        ret
+    end
+
+    if str.StartsWith(data, "c:"):
+        id := data.substr(2, data.len() - 2)
+        o := store.Get(id)
+        if o.id.len() == 0 || o.chat_id != chat_id:
+            tgapi.Answer(_bot, query_id, CancelReason("not_found"), false)
+            ret
+        end
+        reason := engine.Cancel(id)
+        if reason.len() == 0:
+            tgapi.Answer(_bot, query_id, "سفارش لغو شد.", false)
+            tgapi.DropKeyboard(_bot, chat_id, message_id)
+        else:
+            tgapi.Answer(_bot, query_id, CancelReason(reason), true)
+            if reason != "already_open": tgapi.DropKeyboard(_bot, chat_id, message_id) end
+        end
+        ret
+    end
+
+    tgapi.Answer(_bot, query_id, "", false)
+end
+
+// The text one engine event turns into.
+func EventText(e: engine.Event): str:
+    o := e.order
+    head := texts.Headline(o)
+
+    if e.kind == engine.EV_ARMED:
+        ret "🎯 <b>قیمت به هدف رسید</b>\n\n" + head + "\nقیمت برخورد: <code>" + timex.FormatPrice(e.price) +
+            "</code>\nورود در ابتدای کندل بعدی، ساعت " + timex.FormatTime(e.entry_at, _config.timezone_offset) + "."
+    end
+    if e.kind == engine.EV_TRIGGERED:
+        ret "🎯 <b>قیمت به هدف رسید، در حال ورود</b>\n\n" + head + "\nقیمت برخورد: <code>" + timex.FormatPrice(e.price) +
+            "</code>\n" + texts.DirectionLong(o.direction) + " · " + texts.TriggerLabel(o.trigger_mode)
+    end
+    if e.kind == engine.EV_OPENED:
+        mut text := "🔵 <b>معامله باز شد</b>\n\n" + texts.RenderOrder(o, _config.timezone_offset, true) +
+            "\nقیمت ورود: <code>" + timex.FormatPrice(o.open_price) + "</code>"
+        if o.closes_at > 0.0:
+            text = text + "\nبسته می‌شود در: " + timex.FormatTime(o.closes_at, _config.timezone_offset)
+        end
+        ret text
+    end
+    if e.kind == engine.EV_SETTLED:
+        mut title := "🟰 <b>مساوی</b>"
+        if o.status == types.ST_WON: title = "✅ <b>برد</b>" end
+        if o.status == types.ST_LOST: title = "🛑 <b>باخت</b>" end
+        ret title + "\n\n" + head + "\nقیمت ورود: <code>" + timex.FormatPrice(o.open_price) +
+            "</code> · قیمت خروج: <code>" + timex.FormatPrice(o.close_price) + "</code>\nسود/زیان: <b>" +
+            timex.FormatMoney(o.profit) + "</b>"
+    end
+    if e.kind == engine.EV_FAILED:
+        ret "⚠️ <b>سفارش ناموفق</b>\n\n" + head + "\n" + texts.EscapeHtml(e.detail)
+    end
+    if e.kind == engine.EV_EXPIRED:
+        ret "⌛️ <b>سفارش منقضی شد</b>\n\n" + head + "\nقیمت تا پایان مهلت به <code>" +
+            timex.FormatPrice(o.trigger_price) + "</code> نرسید."
+    end
+    if e.kind == engine.EV_MISSED:
+        ret "🚫 <b>فرصت از دست رفت، سفارش لغو شد</b>\n\n" + head + "\n" + texts.EscapeHtml(e.detail) +
+            "\nقیمت فعلی: <code>" + timex.FormatPrice(e.price) + "</code>\nبرای ورود با قیمت تازه، سفارش جدید ثبت کنید."
+    end
+    if e.kind == engine.EV_SETTLE_LATE:
+        ret "⏱ <b>نتیجهٔ معامله هنوز نرسیده</b>\n\n" + head +
+            "\nزمان انقضا گذشته اما کارگزار هنوز نتیجه را اعلام نکرده است. پیگیری ادامه دارد."
+    end
+    ret ""
+end
+
+// Starts the bot: credentials into the broker, command menu into Telegram.
+pub func Init(c: config.Config): bool:
+    _config = c
+    _bot = bot.NewBot(c.token)
+    settings.Init(c)
+
+    me := bot.GetMe(_bot)
+    if !me.ok:
+        println "[telegram] could not reach Telegram: " + me.description
+        ret false
+    end
+    println "[telegram] bot @" + bot.ParseUser(me.result).username + " is live"
+
+    mut mode := types.MODE_DEMO
+    repeat 2 with i:
+        if i == 1: mode = types.MODE_REAL end
+        raw := settings.Ssid(mode)
+        if raw.len() > 0:
+            auth := ssid.Parse(raw, mode, settings.Uid(mode))
+            if auth.ok:
+                broker.SetCredentials(mode, auth)
+            else:
+                println "[telegram] stored " + mode + " session is unreadable: " + auth.error
+            end
+        else:
+            println "[telegram] no Pocket Option session for the " + mode + " account; set it with /session " + mode + " <SSID>"
+        end
+    end
+
+    tgapi.PublishCommands(_bot)
+    _ready = true
+    ret true
+end
+
+pub func Dispatch(u: bot.Update):
+    if u.has_message:
+        m := u.message
+        chat_id := m.chat.id
+        if !Allowed(chat_id):
+            _m := tgapi.Send(_bot, chat_id, "⛔️ دسترسی ندارید.\nشناسهٔ چت شما: <code>" + str.FromInt(chat_id) +
+                "</code>\nبرای دسترسی، این شناسه را در <code>TELEGRAM_ADMIN_IDS</code> قرار دهید.", "")
+            ret
+        end
+
+        if bot.IsCommand(m.text):
+            HandleCommand(chat_id, m.message_id, m.text)
+            ret
+        end
+        if wizard.HandleText(_bot, chat_id, m.text, m.message_id): ret end
+        if m.text.len() > 0:
+            _m := tgapi.Send(_bot, chat_id, "برای ساخت سفارش /new را بزنید یا /help را ببینید.", "")
+        end
+        ret
+    end
+
+    if u.has_callback_query:
+        q := u.callback_query
+        chat_id := q.message.chat.id
+        if !Allowed(chat_id):
+            tgapi.Answer(_bot, q.id, "⛔️ دسترسی ندارید.", true)
+            ret
+        end
+        HandleCallback(chat_id, q.id, q.data, q.message.message_id, q.message.text)
+    end
+end
+
+pub func Ready(): bool:
+    ret _ready
+end
+
+// One round of Telegram polling. `timeout` is seconds the long poll may
+// block; 0 keeps the loop free for the broker sockets.
+pub func Poll(timeout: i64):
+    resp := bot.GetUpdates(_bot, _offset, 20 as i64, timeout)
+    if !resp.ok: ret end
+
+    mut updates := bot.ParseUpdates(resp.result)
+    defer updates.free()
+    mut i := 0
+    while i < updates.len():
+        u := updates.get(i)
+        Dispatch(u)
+        if u.update_id >= _offset: _offset = u.update_id + 1 as i64 end
+        i = i + 1
+    end
+end
+
+// Turns whatever the engine reported into messages.
+pub func Notify():
+    while true:
+        e := engine.TakeEvent()
+        if e.kind.len() == 0: break end
+
+        if e.kind == engine.EV_AUTH_FAILED:
+            Broadcast("🔑 <b>نشست " + texts.AccountLabel(e.mode) + " رد شد</b>\n\n" + texts.EscapeHtml(e.detail) +
+                "\n\nسفارش‌های شما دست‌نخورده مانده‌اند اما تا ثبت نشست تازه دنبال نمی‌شوند.\n" +
+                "برای ثبت مجدد: <code>/session " + e.mode + " &lt;SSID&gt;</code>")
+            continue
+        end
+
+        text := EventText(e)
+        if text.len() == 0: continue end
+        _m := tgapi.Send(_bot, e.order.chat_id, BalanceSuffix(text, e.order.account_mode), "")
+    end
+end

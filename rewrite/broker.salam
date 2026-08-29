@@ -1,0 +1,744 @@
+/*
+ * The Pocket Option connection.
+ *
+ * One socket per (account, symbol) that an order needs, opened on demand and
+ * closed once nothing is holding it. The broker publishes no API contract,
+ * so every frame is read defensively and an unknown one is ignored rather
+ * than fatal.
+ *
+ * There are no callbacks here: Pump() pulls events and writes what it
+ * learned into the session, which suits both Salam (a lambda captures by
+ * value and cannot write back) and the single-threaded loop this bot runs.
+ */
+package broker
+
+import str
+import time
+import net.socketio
+import jsonx "jsonx.salam"
+import types "types.salam"
+import symbols "symbols.salam"
+import timex "timex.salam"
+import config "config.salam"
+import ssid "ssid.salam"
+
+// Outgoing event names.
+const OUT_AUTH := "auth"
+const OUT_USER_INIT := "user_init"
+const OUT_PLAYER_STATE := "ps"
+const OUT_SUBSCRIBE := "subfor"
+const OUT_UNSUBSCRIBE := "unsubfor"
+const OUT_CHANGE_SYMBOL := "changeSymbol"
+const OUT_OPEN_ORDER := "openOrder"
+
+// Incoming event names.
+const IN_SID := "sid"
+const IN_SUCCESS_AUTH := "successauth"
+const IN_AUTH_SUCCESS := "auth/success"
+const IN_AUTH_ERROR := "auth/error"
+const IN_NOT_AUTHORIZED := "NotAuthorized"
+const IN_STREAM := "updateStream"
+const IN_ASSETS := "updateAssets"
+const IN_BALANCE := "updateBalance"
+const IN_BALANCE_OK := "successupdateBalance"
+const IN_OPEN_OK := "successopenOrder"
+const IN_OPEN_FAIL := "failopenOrder"
+const IN_CLOSE_OK := "successcloseOrder"
+const IN_CLOSED_DEALS := "updateClosedDeals"
+const IN_HISTORY_NEW := "updateHistoryNew"
+const IN_HISTORY_PERIOD := "loadHistoryPeriod"
+
+// The broker clock is learned from its own timestamps, snapped to this
+// quantum so a jittery tick cannot drag the offset around.
+const OFFSET_QUANTUM := 900 as i64
+const PLAYER_STATE_INTERVAL := 30.0
+
+// State this package keeps for the life of the process. The sockets are
+// held by index, so a session can be updated in place while it is pumped.
+mut _sessions := Vector {} as Vector<Session>
+mut _deals := Vector {} as Vector<Deal>
+mut _demo_assets := Vector {} as Vector<symbols.Asset>
+mut _real_assets := Vector {} as Vector<symbols.Asset>
+mut _demo := Creds {}
+mut _real := Creds {}
+mut _offset_default := 7200 as i64
+mut _verbose := false
+
+// A trade the broker has closed and paid out.
+@en "Deal"
+@fa "معامله"
+pub struct Deal:
+    pub deal_id: str = ""
+    pub asset: str = ""
+    pub profit: f64 = 0.0
+    pub amount: f64 = 0.0
+    pub close_price: f64 = 0.0
+    pub close_time: f64 = 0.0
+end
+
+// The broker's answer to an order we sent.
+@en "Ack"
+@fa "تاییدیه"
+pub struct Ack:
+    pub ok: bool = false
+    pub error: str = ""
+    pub deal_id: str = ""
+    pub open_price: f64 = 0.0
+    pub open_time: f64 = 0.0
+    pub close_time: f64 = 0.0
+end
+
+// One live connection, and everything it has told us.
+@en "Session"
+@fa "نشست"
+pub struct Session:
+    pub mode: str = ""
+    // "" for the control session an account keeps for balance and assets.
+    pub symbol: str = ""
+    pub p: void* = null
+    pub endpoint: int = 0
+
+    pub ready: bool = false
+    pub auth_failed: bool = false
+    pub auth_error: str = ""
+    pub auth_sent_at: f64 = 0.0
+    pub was_ready: bool = false
+
+    pub holders: i64 = 0
+    pub idle_since: f64 = 0.0
+
+    pub price: f64 = 0.0
+    pub has_price: bool = false
+    pub prior_price: f64 = 0.0
+    pub last_tick_time: f64 = 0.0
+    // Set on the tick that resumes a stream which went quiet: the price may
+    // have crossed a trigger unseen, so entering on it would be a lie.
+    pub tick_follows_gap: bool = false
+    pub lost_data: bool = false
+
+    pub balance: f64 = 0.0
+    pub has_balance: bool = false
+    pub last_player_state: f64 = 0.0
+
+    pub timeframe: i64 = 60
+    pub time_offset: i64 = 7200
+end
+
+// Credentials as plain text, kept here rather than as another package's
+// struct so no global holds a cross-module default.
+struct Creds:
+    pub frame: str = ""
+    pub init_frame: str = ""
+    pub has_init: bool = false
+    pub ok: bool = false
+end
+
+func Log(line: str):
+    if _verbose: println "[broker] " + line end
+end
+
+func CredsFor(mode: str): Creds:
+    if mode == types.MODE_DEMO: ret _demo end
+    ret _real
+end
+
+// Pocket Option answers with binary attachments, not JSON text: the event
+// carries socket.io's `{"_placeholder":true,"num":0}` and the bytes travel
+// beside it. This is the one place that difference matters.
+func Payload(ev: socketio.Event): str:
+    if socketio.ArgCount(ev) == 0: ret "" end
+    if socketio.ArgIsBinary(ev, 0):
+        ret socketio.BytesToStr(socketio.ArgBytes(ev, 0))
+    end
+    ret socketio.Arg(ev, 0)
+end
+
+func ClientOf(s: Session): socketio.Client:
+    ret socketio.Client { p = s.p }
+end
+
+func SendAuth(s: Session):
+    c := CredsFor(s.mode)
+    if !c.ok: ret end
+    client := ClientOf(s)
+    if c.has_init:
+        _i := socketio.EmitJSON(client, OUT_USER_INIT, c.init_frame)
+    end
+    _a := socketio.EmitJSON(client, OUT_AUTH, c.frame)
+end
+
+func SendSubscribe(s: Session):
+    if s.symbol.len() == 0: ret end
+    client := ClientOf(s)
+    _s := socketio.EmitStr(client, OUT_SUBSCRIBE, s.symbol)
+    _c := socketio.EmitJSON(client, OUT_CHANGE_SYMBOL,
+        `{"asset":"` + s.symbol + `","period":` + str.FromInt(s.timeframe) + `}`)
+end
+
+// The broker's own clock, learned from a timestamp it sent us.
+func LearnOffset(s &: Session, broker_time: f64):
+    if broker_time <= 0.0: ret end
+    raw := broker_time - timex.NowSeconds()
+    if raw > 86400.0 || raw < 0.0 - 86400.0: ret end
+    snapped := ((raw / (OFFSET_QUANTUM as f64) + 0.5) as i64) * OFFSET_QUANTUM
+    if snapped != s.time_offset:
+        Log("server time offset learned: " + str.FromInt(s.time_offset) + "s -> " + str.FromInt(snapped) + "s")
+        s.time_offset = snapped
+    end
+end
+
+func ApplyTick(s &: Session, symbol: str, tick_time: f64, price: f64, max_gap: i64):
+    if s.symbol.len() > 0 && symbol != s.symbol: ret end
+
+    mut silence := 0.0
+    if s.last_tick_time > 0.0: silence = tick_time - s.last_tick_time end
+    s.tick_follows_gap = s.lost_data || silence > (max_gap as f64)
+    if s.tick_follows_gap && s.last_tick_time > 0.0:
+        Log("resuming after a " + str.FromInt(silence as i64) + "s gap in the price stream")
+    end
+
+    s.lost_data = false
+    if s.has_price: s.prior_price = s.price end
+    s.price = price
+    s.has_price = true
+    s.last_tick_time = tick_time
+    LearnOffset(s, tick_time)
+end
+
+func ReadAssets(raw: str): Vector<symbols.Asset>:
+    mut out := Vector {} as Vector<symbols.Asset>
+    mut rows := jsonx.SplitArray(raw)
+    defer rows.free()
+
+    mut i := 0
+    while i < rows.len():
+        mut cols := jsonx.SplitArray(rows.get(i))
+        if cols.len() >= 3:
+            mut a := symbols.Asset {}
+            a.symbol = jsonx.Unquote(cols.get(1))
+            a.name = jsonx.Unquote(cols.get(2))
+            if cols.len() > 5 && !jsonx.IsNull(cols.get(5)):
+                a.payout = jsonx.AsInt(cols.get(5))
+                a.has_payout = true
+            end
+            // The open flag sits past the payouts, and the broker has moved
+            // it before: the first boolean after column 12 is the one.
+            a.is_open = true
+            mut k := 12
+            while k < cols.len():
+                v := str.Trim(cols.get(k))
+                if v == "true" || v == "false":
+                    a.is_open = v == "true"
+                    break
+                end
+                k = k + 1
+            end
+            if a.symbol.len() > 0: out.push(a) end
+        end
+        cols.free()
+        i = i + 1
+    end
+    ret out
+end
+
+func StoreAssets(mode: str, list: Vector<symbols.Asset>):
+    if mode == types.MODE_DEMO:
+        _demo_assets.free()
+        _demo_assets = list
+    else:
+        _real_assets.free()
+        _real_assets = list
+    end
+end
+
+func ReadDeals(raw: str): Vector<Deal>:
+    mut out := Vector {} as Vector<Deal>
+    text := str.Trim(raw)
+    mut body := text
+    if text.len() > 0 && text.substr(0, 1) == "{":
+        body = jsonx.Field(text, "deals")
+    end
+
+    mut rows := jsonx.SplitArray(body)
+    defer rows.free()
+    mut i := 0
+    while i < rows.len():
+        obj := rows.get(i)
+        mut d := Deal {}
+        d.deal_id = jsonx.Unquote(jsonx.Field(obj, "id"))
+        if d.deal_id.len() > 0:
+            d.asset = jsonx.Unquote(jsonx.Field(obj, "asset"))
+            d.profit = jsonx.FieldFloat(obj, "profit")
+            d.amount = jsonx.FieldFloat(obj, "amount")
+            d.close_price = jsonx.FieldFloat(obj, "closePrice")
+            d.close_time = jsonx.AsFloat(jsonx.FieldAny(obj, "closeTimestamp", "closeTime"))
+            out.push(d)
+        end
+        i = i + 1
+    end
+    ret out
+end
+
+func HandleEvent(index: int, name: str, payload: str, max_gap: i64):
+    mut s := _sessions.get(index)
+
+    if name == IN_SUCCESS_AUTH || name == IN_AUTH_SUCCESS:
+        s.ready = true
+        s.was_ready = true
+        s.auth_failed = false
+        Log(s.mode + "/" + s.symbol + " authenticated")
+        _sessions.set(index, s)
+        SendSubscribe(s)
+        ret
+    end
+
+    if name == IN_NOT_AUTHORIZED || name == IN_AUTH_ERROR:
+        s.auth_failed = true
+        s.ready = false
+        s.auth_error = "کارگزار این نشست را نپذیرفت (" + name + ")."
+        _sessions.set(index, s)
+        ret
+    end
+
+    if name == IN_SID:
+        _sessions.set(index, s)
+        if !s.ready: SendAuth(s) end
+        ret
+    end
+
+    if name == IN_STREAM:
+        mut rows := jsonx.SplitArray(payload)
+        mut i := 0
+        while i < rows.len():
+            mut cols := jsonx.SplitArray(rows.get(i))
+            if cols.len() >= 3:
+                ApplyTick(s, jsonx.Unquote(cols.get(0)), jsonx.AsFloat(cols.get(1)), jsonx.AsFloat(cols.get(2)), max_gap)
+            end
+            cols.free()
+            i = i + 1
+        end
+        rows.free()
+        _sessions.set(index, s)
+        ret
+    end
+
+    if name == IN_HISTORY_NEW || name == IN_HISTORY_PERIOD:
+        asset := jsonx.Unquote(jsonx.Field(payload, "asset"))
+        mut history := jsonx.SplitArray(jsonx.Field(payload, "history"))
+        if history.len() == 0:
+            history.free()
+            history = jsonx.SplitArray(jsonx.Field(payload, "data"))
+        end
+        if history.len() > 0:
+            last := history.get(history.len() - 1)
+            mut cols := jsonx.SplitArray(last)
+            if cols.len() >= 2:
+                // A history point is [time, price] or {time, price}.
+                ApplyTick(s, asset, jsonx.AsFloat(cols.get(0)), jsonx.AsFloat(cols.get(1)), max_gap)
+            else:
+                ApplyTick(s, asset, jsonx.FieldFloat(last, "time"), jsonx.FieldFloat(last, "price"), max_gap)
+            end
+            cols.free()
+        end
+        history.free()
+        _sessions.set(index, s)
+        ret
+    end
+
+    if name == IN_BALANCE || name == IN_BALANCE_OK:
+        // Account-scoped data is proof of authentication, whatever the
+        // broker renamed its success event to this month.
+        s.ready = true
+        s.was_ready = true
+        mut value := 0.0
+        text := str.Trim(payload)
+        if text.len() > 0 && text.substr(0, 1) == "{":
+            value = jsonx.FieldFloat(text, "balance")
+        else:
+            value = jsonx.AsFloat(text)
+        end
+        if value != 0.0 || !s.has_balance:
+            s.balance = value
+            s.has_balance = true
+        end
+        _sessions.set(index, s)
+        ret
+    end
+
+    if name == IN_ASSETS:
+        list := ReadAssets(payload)
+        if list.len() > 0:
+            StoreAssets(s.mode, list)
+            Log(s.mode + " asset list: " + str.FromInt(list.len() as i64) + " symbols")
+        else:
+            mut empty := list
+            empty.free()
+        end
+        _sessions.set(index, s)
+        ret
+    end
+
+    if name == IN_CLOSE_OK || name == IN_CLOSED_DEALS:
+        mut deals := ReadDeals(payload)
+        mut i := 0
+        while i < deals.len():
+            _deals.push(deals.get(i))
+            i = i + 1
+        end
+        deals.free()
+        _sessions.set(index, s)
+        ret
+    end
+
+    _sessions.set(index, s)
+end
+
+// Pumps one session: everything the socket has to say, until it says
+// nothing. Lifecycle events are handled here too, since a reconnect has to
+// re-authenticate before the stream means anything.
+func PumpOne(index: int, wait_ms: int, max_gap: i64):
+    s := _sessions.get(index)
+    if s.p == null: ret end
+    client := ClientOf(s)
+
+    mut budget := 16
+    mut first := true
+    while budget > 0:
+        // Next() with a zero timeout returns without touching the transport,
+        // so every session gets a real (if small) slice of time. Only the
+        // first read of a turn waits; the rest drain what is already there.
+        mut ms := 1
+        if first: ms = wait_ms end
+        ev := socketio.Next(client, ms)
+        first = false
+
+        if ev.kind == socketio.EV_TIMEOUT || ev.kind == socketio.EV_NONE:
+            socketio.EventFree(ev)
+            break
+        end
+
+        if ev.kind == socketio.EV_CONNECT:
+            mut fresh := _sessions.get(index)
+            fresh.ready = false
+            fresh.auth_sent_at = timex.NowSeconds()
+            _sessions.set(index, fresh)
+            SendAuth(fresh)
+            Log(fresh.mode + "/" + fresh.symbol + " connected, authenticating")
+        else ev.kind == socketio.EV_DISCONNECT:
+            mut fresh := _sessions.get(index)
+            fresh.ready = false
+            fresh.lost_data = true
+            _sessions.set(index, fresh)
+            Log(fresh.mode + "/" + fresh.symbol + " disconnected: " + ev.message)
+        else ev.kind == socketio.EV_EVENT:
+            payload := Payload(ev)
+            if _verbose:
+                mut head := payload
+                if head.len() > 160: head = head.substr(0, 160) + "…" end
+                Log("<= " + ev.name + " " + head)
+            end
+            HandleEvent(index, ev.name, payload, max_gap)
+        end
+
+        socketio.EventFree(ev)
+        budget = budget - 1
+    end
+
+    // Keep the balance fresh; the broker only volunteers it when asked.
+    mut after := _sessions.get(index)
+    now := timex.NowSeconds()
+    if after.ready && now - after.last_player_state > PLAYER_STATE_INTERVAL:
+        after.last_player_state = now
+        _sessions.set(index, after)
+        _p := socketio.Emit(ClientOf(after), OUT_PLAYER_STATE)
+    end
+end
+
+func OpenSocket(s &: Session):
+    mut servers := config.Servers(s.mode)
+    defer servers.free()
+    if servers.len() == 0: ret end
+
+    idx := s.endpoint % servers.len()
+    url := servers.get(idx)
+
+    mut opts := socketio.NewOptions()
+    opts.path = "/socket.io"
+    opts.transports = socketio.TRANSPORT_WEBSOCKET
+    opts.headers = "Origin: " + config.Origin() + "\r\n"
+    opts.reconnection = true
+    opts.reconnection_delay = 1000
+    opts.reconnection_delay_max = 15000
+    opts.timeout = 15000
+    opts.auto_connect = false
+
+    client := socketio.DialWith(url, opts)
+    s.p = client.p
+    s.time_offset = _offset_default
+    Log("connecting to " + url + " for " + s.mode + "/" + s.symbol)
+
+    if socketio.Connect(client):
+        s.auth_sent_at = timex.NowSeconds()
+        SendAuth(s)
+    end
+end
+
+// Turns the broker chatter into log lines. Off by default.
+pub func SetVerbose(enabled: bool):
+    _verbose = enabled
+end
+
+pub func SetDefaultOffset(seconds: i64):
+    _offset_default = seconds
+end
+
+// Stores the credentials one account will connect with.
+pub func SetCredentials(mode: str, auth: ssid.Auth):
+    mut c := Creds {}
+    c.frame = auth.frame
+    c.init_frame = auth.init_frame
+    c.has_init = auth.has_init
+    c.ok = auth.ok
+    if mode == types.MODE_DEMO: _demo = c
+    else: _real = c
+    end
+end
+
+pub func HasCredentials(mode: str): bool:
+    ret CredsFor(mode).ok
+end
+
+// The index of a session, or -1.
+pub func Find(mode: str, symbol: str): int:
+    mut i := 0
+    while i < _sessions.len():
+        s := _sessions.get(i)
+        if s.mode == mode && s.symbol == symbol: ret i end
+        i = i + 1
+    end
+    ret 0 - 1
+end
+
+/*
+ * A session for this account and symbol, opening one if needed.
+ *
+ * Sessions are reference counted: whoever acquires one releases it, and the
+ * housekeeper closes it once nothing has held it for the idle timeout.
+ */
+pub func Acquire(mode: str, symbol: str, timeframe: i64): int:
+    existing := Find(mode, symbol)
+    if existing >= 0:
+        mut s := _sessions.get(existing)
+        s.holders = s.holders + 1 as i64
+        s.idle_since = 0.0
+        if timeframe > 0 && timeframe != s.timeframe:
+            s.timeframe = timeframe
+            _sessions.set(existing, s)
+            if s.ready: SendSubscribe(s) end
+        else:
+            _sessions.set(existing, s)
+        end
+        ret existing
+    end
+
+    mut s := Session {}
+    s.mode = mode
+    s.symbol = symbol
+    s.holders = 1 as i64
+    if timeframe > 0: s.timeframe = timeframe end
+    OpenSocket(s)
+    _sessions.push(s)
+    ret _sessions.len() - 1
+end
+
+pub func Release(index: int):
+    if index < 0 || index >= _sessions.len(): ret end
+    mut s := _sessions.get(index)
+    if s.holders > 0: s.holders = s.holders - 1 as i64 end
+    if s.holders == 0: s.idle_since = timex.NowSeconds() end
+    _sessions.set(index, s)
+end
+
+pub func Get(index: int): Session:
+    if index < 0 || index >= _sessions.len(): ret Session {} end
+    ret _sessions.get(index)
+end
+
+pub func Count(): int:
+    ret _sessions.len()
+end
+
+// Makes sure the socket is following the timeframe this order needs.
+pub func EnsureTimeframe(index: int, timeframe: i64):
+    if index < 0 || index >= _sessions.len(): ret end
+    mut s := _sessions.get(index)
+    if timeframe <= 0 || timeframe == s.timeframe: ret end
+    s.timeframe = timeframe
+    _sessions.set(index, s)
+    if s.ready: SendSubscribe(s) end
+end
+
+/*
+ * Lets every open socket make progress.
+ *
+ * `wait_ms` is the whole turn's budget, split between the sessions: with
+ * one socket it all goes there, and with several none of them is starved
+ * while the loop waits on another.
+ */
+pub func Pump(wait_ms: int, max_gap: i64):
+    count := _sessions.len()
+    if count == 0: ret end
+
+    mut share := wait_ms / count
+    if share < 5: share = 5 end
+
+    mut i := 0
+    while i < count:
+        PumpOne(i, share, max_gap)
+        i = i + 1
+    end
+end
+
+// Closes sockets nothing has needed for `idle_ttl` seconds.
+pub func CloseIdle(idle_ttl: i64):
+    now := timex.NowSeconds()
+    mut i := 0
+    while i < _sessions.len():
+        s := _sessions.get(i)
+        if s.holders == 0 && s.idle_since > 0.0 && now - s.idle_since > (idle_ttl as f64):
+            Log("closing idle session " + s.mode + "/" + s.symbol)
+            socketio.Close(ClientOf(s))
+            _sessions.remove_at(i)
+        else:
+            i = i + 1
+        end
+    end
+end
+
+// Drops every session for one account, so new credentials take effect.
+pub func ResetMode(mode: str):
+    mut i := 0
+    while i < _sessions.len():
+        s := _sessions.get(i)
+        if s.mode == mode:
+            socketio.Close(ClientOf(s))
+            _sessions.remove_at(i)
+        else:
+            i = i + 1
+        end
+    end
+end
+
+pub func CloseAll():
+    mut i := 0
+    while i < _sessions.len():
+        socketio.Close(ClientOf(_sessions.get(i)))
+        i = i + 1
+    end
+    _sessions.clear()
+end
+
+// The assets one account can trade, as the broker last listed them.
+pub func Assets(mode: str): Vector<symbols.Asset>:
+    if mode == types.MODE_DEMO: ret _demo_assets end
+    ret _real_assets
+end
+
+pub func AssetCount(mode: str): int:
+    ret Assets(mode).len()
+end
+
+// The next settled trade the broker reported, or an empty Deal.
+pub func TakeDeal(): Deal:
+    if _deals.len() == 0: ret Deal {} end
+    d := _deals.get(0)
+    _deals.remove_at(0)
+    ret d
+end
+
+pub func RefreshBalance(index: int):
+    if index < 0 || index >= _sessions.len(): ret end
+    s := _sessions.get(index)
+    if s.p == null: ret end
+    _p := socketio.Emit(ClientOf(s), OUT_PLAYER_STATE)
+end
+
+/*
+ * Sends one order and waits for the broker to acknowledge it.
+ *
+ * Exactly one of `duration_seconds` and `close_at` is sent: a fixed trade
+ * asks for N seconds, a candle-aligned one asks for an absolute close on the
+ * broker's clock.
+ */
+pub func PlaceOrder(index: int, amount: f64, direction: str, duration_seconds: i64, close_at: f64, timeout_ms: i64, max_gap: i64): Ack:
+    mut ack := Ack {}
+    if index < 0 || index >= _sessions.len():
+        ack.error = "no live session for this order"
+        ret ack
+    end
+
+    s := _sessions.get(index)
+    if s.p == null || !s.ready:
+        ack.error = "not connected to Pocket Option"
+        ret ack
+    end
+
+    request_id := (timex.NowSeconds() as i64) * 1000 + (_sessions.len() as i64)
+    mut body := `{"asset":"` + s.symbol + `","amount":` + timex.FormatPrice(amount) +
+        `,"action":"` + direction + `","isDemo":`
+    if s.mode == types.MODE_DEMO: body = body + "1" else: body = body + "0" end
+    body = body + `,"requestId":` + str.FromInt(request_id) + `,"optionType":100`
+    if close_at > 0.0:
+        body = body + `,"closeAt":` + str.FromInt(close_at as i64)
+    else:
+        body = body + `,"time":` + str.FromInt(duration_seconds)
+    end
+    body = body + "}"
+
+    Log("placing " + direction + " " + s.symbol + " " + body)
+    if !socketio.EmitJSON(ClientOf(s), OUT_OPEN_ORDER, body):
+        ack.error = "could not send the order"
+        ret ack
+    end
+
+    deadline := time.NowMillis() + timeout_ms
+    while time.NowMillis() < deadline:
+        mut fresh := _sessions.get(index)
+        client := ClientOf(fresh)
+        ev := socketio.Next(client, 100)
+
+        if ev.kind == socketio.EV_EVENT:
+            payload := Payload(ev)
+            if ev.name == IN_OPEN_OK:
+                ack.deal_id = jsonx.Unquote(jsonx.Field(payload, "id"))
+                ack.open_price = jsonx.FieldFloat(payload, "openPrice")
+                ack.open_time = jsonx.AsFloat(jsonx.FieldAny(payload, "openTimestamp", "openTime"))
+                ack.close_time = jsonx.AsFloat(jsonx.FieldAny(payload, "closeTimestamp", "closeTime"))
+                ack.ok = ack.deal_id.len() > 0
+                if !ack.ok: ack.error = "the broker acknowledged an order with no id" end
+                LearnOffset(fresh, ack.open_time)
+                _sessions.set(index, fresh)
+                socketio.EventFree(ev)
+                ret ack
+            end
+            if ev.name == IN_OPEN_FAIL:
+                mut reason := jsonx.Unquote(jsonx.Field(payload, "error"))
+                if reason.len() == 0: reason = jsonx.Unquote(jsonx.Field(payload, "message")) end
+                if reason.len() == 0: reason = "the broker refused the order" end
+                ack.error = reason
+                socketio.EventFree(ev)
+                ret ack
+            end
+            HandleEvent(index, ev.name, payload, max_gap)
+        else ev.kind == socketio.EV_DISCONNECT:
+            mut gone := _sessions.get(index)
+            gone.ready = false
+            gone.lost_data = true
+            _sessions.set(index, gone)
+        end
+        socketio.EventFree(ev)
+    end
+
+    ack.error = "broker did not acknowledge the order in time"
+    ret ack
+end

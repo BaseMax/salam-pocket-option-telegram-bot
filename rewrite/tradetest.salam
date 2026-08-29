@@ -1,0 +1,95 @@
+// The full order life, on the demo account: arm at the current price so it
+// triggers at once, open a 60 second trade for $1, and wait for the broker
+// to settle it. Demo only - it refuses to run against a real account.
+package main
+
+import time
+import config "config.salam"
+import store "store.salam"
+import broker "broker.salam"
+import engine "engine.salam"
+import ssid "ssid.salam"
+import types "types.salam"
+import timex "timex.salam"
+
+func main:
+    c := config.Load()
+    if c.demo_ssid.len() == 0:
+        println "set PO_DEMO_SSID to run this"
+        ret
+    end
+
+    auth := ssid.Parse(c.demo_ssid, types.MODE_DEMO, c.demo_uid)
+    if !auth.ok:
+        println "SSID unreadable: " + auth.error
+        ret
+    end
+    if auth.is_demo != 1:
+        println "this test only ever runs against a demo account"
+        ret
+    end
+
+    if !store.Open("/tmp/salam-tradetest.sqlite"):
+        println "could not open the scratch database"
+        ret
+    end
+    broker.SetCredentials(types.MODE_DEMO, auth)
+    engine.Start(c)
+
+    symbol := "EURUSD_otc"
+    println "waiting for a price on " + symbol + "…"
+    price := engine.Price(types.MODE_DEMO, symbol, 20000 as i64)
+    if price == 0.0:
+        println "no price arrived; is the market open?"
+        ret
+    end
+    println "market is at " + timex.FormatPrice(price)
+
+    mut o := types.Order {}
+    o.chat_id = 1 as i64
+    o.account_mode = types.MODE_DEMO
+    o.symbol = symbol
+    o.direction = types.CALL
+    // The trigger sits on the market, so the very next tick is a touch.
+    o.trigger_price = price
+    o.trigger_mode = types.TRIGGER_TOUCH
+    o.amount = 1.0
+    o.expiry_mode = types.EXPIRY_FIXED
+    o.duration_seconds = 60 as i64
+    o.timeframe_seconds = 60 as i64
+    o.chart_type = types.CHART_CANDLE
+
+    saved := engine.CreateOrder(o)
+    println "order " + saved.id + " created: " + saved.direction + " " + saved.symbol +
+        " at " + timex.FormatPrice(saved.trigger_price) + " (side " + saved.approach_side + ")"
+
+    deadline := time.NowMillis() + 150000 as i64
+    mut settled := false
+    while time.NowMillis() < deadline && !settled:
+        engine.Step(200)
+        engine.Housekeep()
+
+        while true:
+            e := engine.TakeEvent()
+            if e.kind.len() == 0: break end
+            println "event: " + e.kind + " " + e.order.id + " " + e.order.status +
+                " price=" + timex.FormatPrice(e.price) + " " + e.detail
+            if e.kind == engine.EV_SETTLED:
+                println "  profit: " + timex.FormatMoney(e.order.profit) +
+                    " (open " + timex.FormatPrice(e.order.open_price) +
+                    " → close " + timex.FormatPrice(e.order.close_price) + ")"
+                settled = true
+            end
+            if e.kind == engine.EV_FAILED: settled = true end
+        end
+    end
+
+    final := store.Get(saved.id)
+    println "---"
+    println "final status: " + final.status
+    println "deal id:      " + final.deal_id
+    if final.has_profit: println "profit:       " + timex.FormatMoney(final.profit) end
+
+    engine.Stop()
+    store.Close()
+end

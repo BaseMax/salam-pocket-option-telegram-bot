@@ -1,0 +1,140 @@
+// The defaults a user changes with /set, and the credentials they send with
+// /session. Everything here outlives a restart, in the settings table.
+package settings
+
+import str
+import types "types.salam"
+import store "store.salam"
+import config "config.salam"
+
+mut _config := config.Config {}
+
+pub func Init(c: config.Config):
+    _config = c
+end
+
+pub func Mode(): str:
+    ret store.GetSetting("mode", types.MODE_DEMO)
+end
+
+pub func SetMode(mode: str):
+    store.PutSetting("mode", mode)
+end
+
+pub func Amount(): f64:
+    ret store.GetSettingFloat("amount", _config.default_amount)
+end
+
+pub func SetAmount(value: f64):
+    store.PutSetting("amount", str.FromFloat(value))
+end
+
+pub func Timeframe(): i64:
+    ret store.GetSettingInt("timeframe", _config.default_timeframe)
+end
+
+pub func SetTimeframe(seconds: i64):
+    store.PutSetting("timeframe", str.FromInt(seconds))
+end
+
+pub func Duration(): i64:
+    ret store.GetSettingInt("duration", _config.default_duration)
+end
+
+pub func SetDuration(seconds: i64):
+    store.PutSetting("duration", str.FromInt(seconds))
+end
+
+pub func Candles(): i64:
+    ret store.GetSettingInt("candles", 1 as i64)
+end
+
+pub func SetCandles(count: i64):
+    store.PutSetting("candles", str.FromInt(count))
+end
+
+pub func Chart(): str:
+    ret store.GetSetting("chart", types.CHART_CANDLE)
+end
+
+pub func SetChart(chart: str):
+    store.PutSetting("chart", chart)
+end
+
+pub func Entry(): str:
+    ret store.GetSetting("entry", types.TRIGGER_TOUCH)
+end
+
+pub func SetEntry(mode: str):
+    store.PutSetting("entry", mode)
+end
+
+pub func Expiry(): str:
+    ret store.GetSetting("expiry", types.EXPIRY_FIXED)
+end
+
+pub func SetExpiry(mode: str):
+    store.PutSetting("expiry", mode)
+end
+
+pub func NotifyBalance(): bool:
+    ret store.GetSetting("notify_balance", "on") == "on"
+end
+
+pub func SetNotifyBalance(on_off: str):
+    store.PutSetting("notify_balance", on_off)
+end
+
+// The chats allowed to drive this bot, as one comma separated list.
+pub func Owners(): str:
+    ret store.GetSetting("owners", "")
+end
+
+pub func IsOwner(chat_id: i64): bool:
+    list := Owners()
+    if list.len() == 0: ret false end
+    mut parts := list.split(",")
+    defer parts.free()
+    want := str.FromInt(chat_id)
+    mut i := 0
+    while i < parts.len():
+        if str.Trim(parts.get(i)) == want: ret true end
+        i = i + 1
+    end
+    ret false
+end
+
+pub func AddOwner(chat_id: i64):
+    if IsOwner(chat_id): ret end
+    list := Owners()
+    if list.len() == 0:
+        store.PutSetting("owners", str.FromInt(chat_id))
+    else:
+        store.PutSetting("owners", list + "," + str.FromInt(chat_id))
+    end
+end
+
+// The stored session for one account: what /session wrote, else what the
+// environment seeded.
+pub func Ssid(mode: str): str:
+    mut stored := store.GetSetting("ssid_" + mode, "")
+    if stored.len() > 0: ret stored end
+    if mode == types.MODE_DEMO: ret _config.demo_ssid end
+    ret _config.real_ssid
+end
+
+pub func Uid(mode: str): i64:
+    stored := store.GetSettingInt("uid_" + mode, 0 as i64)
+    if stored > 0: ret stored end
+    if mode == types.MODE_DEMO: ret _config.demo_uid end
+    ret _config.real_uid
+end
+
+pub func SetCredentials(mode: str, raw: str, uid: i64):
+    store.PutSetting("ssid_" + mode, raw)
+    store.PutSetting("uid_" + mode, str.FromInt(uid))
+end
+
+pub func HasCredentials(mode: str): bool:
+    ret Ssid(mode).len() > 0
+end

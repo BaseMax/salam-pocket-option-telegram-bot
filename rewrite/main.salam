@@ -1,0 +1,93 @@
+/*
+ * Pocket Option conditional-order bot, in Salam.
+ *
+ * One thread, one loop: the broker sockets are pumped, the orders that can
+ * move are moved, whatever happened is announced, and Telegram is asked for
+ * new commands. Nothing here blocks for long, which is what keeps a tick
+ * that arrives mid-poll from being late.
+ */
+package main
+
+import os
+import str
+import time
+import config "config.salam"
+import store "store.salam"
+import settings "settings.salam"
+import broker "broker.salam"
+import engine "engine.salam"
+import tgbot "tgbot.salam"
+import timex "timex.salam"
+
+// How long the broker pump may block per turn. Long enough that an idle bot
+// is not a spin loop, short enough that Telegram stays responsive.
+const PUMP_MS := 120
+const HOUSEKEEP_INTERVAL := 1.0
+const TELEGRAM_INTERVAL := 1.0
+const HEARTBEAT_INTERVAL := 30.0
+
+func WriteHeartbeat(path: str):
+    if path.len() == 0: ret end
+    _w := os.WriteFile(path, str.FromInt(time.NowMillis()))
+end
+
+func Startup(c: config.Config): bool:
+    if !config.Ok(c):
+        println "TELEGRAM_BOT_TOKEN is missing. Put it in the environment and start again."
+        ret false
+    end
+
+    if !store.Open(c.db_path):
+        println "could not open the database at " + c.db_path
+        ret false
+    end
+    println "[db] storage ready at " + c.db_path
+
+    settings.Init(c)
+    broker.SetVerbose(str.Lower(os.Env("LOG_LEVEL")) == "debug")
+    broker.SetDefaultOffset(c.server_time_offset)
+
+    if !tgbot.Init(c):
+        store.Close()
+        ret false
+    end
+
+    engine.Start(c)
+    println "[engine] engine started with " + str.FromInt(engine.ActiveCount() as i64) + " live order(s)"
+    ret true
+end
+
+func main:
+    c := config.Load()
+    if !Startup(c): ret end
+
+    mut last_housekeep := 0.0
+    mut last_poll := 0.0
+    mut last_beat := 0.0
+    WriteHeartbeat(c.heartbeat_path)
+
+    println "[main] starting Telegram long polling"
+    while true:
+        // The broker first: a tick that has arrived should be acted on
+        // before anything else in this turn.
+        engine.Step(PUMP_MS)
+        tgbot.Notify()
+
+        now := timex.NowSeconds()
+        if now - last_housekeep >= HOUSEKEEP_INTERVAL:
+            last_housekeep = now
+            engine.Housekeep()
+            tgbot.Notify()
+        end
+
+        if now - last_poll >= TELEGRAM_INTERVAL:
+            last_poll = now
+            tgbot.Poll(0 as i64)
+        end
+
+        if now - last_beat >= HEARTBEAT_INTERVAL:
+            last_beat = now
+            WriteHeartbeat(c.heartbeat_path)
+        end
+    end
+end

@@ -1,0 +1,329 @@
+// Where every order and every setting lives. SQLite is the source of truth:
+// the engine re-reads it on boot, so a restart loses nothing.
+package store
+
+import str
+import conv
+import rand
+import db.sqlite
+import types "types.salam"
+import timex "timex.salam"
+
+const SCHEMA := `
+CREATE TABLE IF NOT EXISTS orders (
+  id                TEXT PRIMARY KEY,
+  chat_id           INTEGER NOT NULL,
+  account_mode      TEXT    NOT NULL,
+  symbol            TEXT    NOT NULL,
+  direction         TEXT    NOT NULL,
+  trigger_price     REAL    NOT NULL,
+  trigger_mode      TEXT    NOT NULL,
+  approach_side     TEXT    NOT NULL,
+  amount            REAL    NOT NULL,
+  expiry_mode       TEXT    NOT NULL,
+  duration_seconds  INTEGER NOT NULL,
+  candle_count      INTEGER NOT NULL,
+  timeframe_seconds INTEGER NOT NULL,
+  chart_type        TEXT    NOT NULL,
+  status            TEXT    NOT NULL,
+  reference_price   REAL,
+  valid_until       REAL,
+  triggered_price   REAL,
+  triggered_at      REAL,
+  deal_id           TEXT,
+  open_price        REAL,
+  opened_at         REAL,
+  closes_at         REAL,
+  close_price       REAL,
+  closed_at         REAL,
+  profit            REAL,
+  note              TEXT,
+  created_at        REAL    NOT NULL,
+  updated_at        REAL    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
+CREATE INDEX IF NOT EXISTS idx_orders_chat   ON orders(chat_id);
+CREATE INDEX IF NOT EXISTS idx_orders_deal   ON orders(deal_id);
+CREATE TABLE IF NOT EXISTS settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+`
+
+const COLUMNS := "id, chat_id, account_mode, symbol, direction, trigger_price, trigger_mode, approach_side, amount, expiry_mode, duration_seconds, candle_count, timeframe_seconds, chart_type, status, reference_price, valid_until, triggered_price, triggered_at, deal_id, open_price, opened_at, closes_at, close_price, closed_at, profit, note, created_at, updated_at"
+
+const ID_ALPHABET := "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+// The one connection this process uses. Held as the raw handle so no struct
+// from another package is ever a global's default.
+mut _handle := null as void*
+
+func Db(): sqlite.Database:
+    ret sqlite.Database { handle = _handle }
+end
+
+// A value that may be absent is stored as NULL; these two keep the "not
+// set" case honest instead of pretending it is zero.
+func TextOrNull(value: str): str:
+    if value.len() == 0: ret "NULL" end
+    ret "'" + str.Replace(value, "'", "''") + "'"
+end
+
+func NumOrNull(value: f64, present: bool): str:
+    if !present: ret "NULL" end
+    ret conv.FormatFloatPrec(value, 6)
+end
+
+func Quote(value: str): str:
+    ret "'" + str.Replace(value, "'", "''") + "'"
+end
+
+func Num(value: f64): str:
+    ret conv.FormatFloatPrec(value, 6)
+end
+
+func ReadOrder(rows: sqlite.Rows): types.Order:
+    mut o := types.Order {}
+    o.id = sqlite.Text(rows, 0)
+    o.chat_id = sqlite.Int64(rows, 1)
+    o.account_mode = sqlite.Text(rows, 2)
+    o.symbol = sqlite.Text(rows, 3)
+    o.direction = sqlite.Text(rows, 4)
+    o.trigger_price = sqlite.Float(rows, 5)
+    o.trigger_mode = sqlite.Text(rows, 6)
+    o.approach_side = sqlite.Text(rows, 7)
+    o.amount = sqlite.Float(rows, 8)
+    o.expiry_mode = sqlite.Text(rows, 9)
+    o.duration_seconds = sqlite.Int64(rows, 10)
+    o.candle_count = sqlite.Int64(rows, 11)
+    o.timeframe_seconds = sqlite.Int64(rows, 12)
+    o.chart_type = sqlite.Text(rows, 13)
+    o.status = sqlite.Text(rows, 14)
+    o.has_reference = !sqlite.IsNull(rows, 15)
+    o.reference_price = sqlite.Float(rows, 15)
+    o.valid_until = sqlite.Float(rows, 16)
+    o.triggered_price = sqlite.Float(rows, 17)
+    o.triggered_at = sqlite.Float(rows, 18)
+    o.deal_id = sqlite.Text(rows, 19)
+    o.open_price = sqlite.Float(rows, 20)
+    o.opened_at = sqlite.Float(rows, 21)
+    o.closes_at = sqlite.Float(rows, 22)
+    o.close_price = sqlite.Float(rows, 23)
+    o.closed_at = sqlite.Float(rows, 24)
+    o.has_profit = !sqlite.IsNull(rows, 25)
+    o.profit = sqlite.Float(rows, 25)
+    o.note = sqlite.Text(rows, 26)
+    o.created_at = sqlite.Float(rows, 27)
+    o.updated_at = sqlite.Float(rows, 28)
+    ret o
+end
+
+func QueryOrders(sql: str): Vector<types.Order>:
+    mut out := Vector {} as Vector<types.Order>
+    rows := sqlite.Query(Db(), sql)
+    while sqlite.Next(rows):
+        out.push(ReadOrder(rows))
+    end
+    _f := sqlite.Finish(rows)
+    ret out
+end
+
+func FreshId(): str:
+    mut attempt := 0
+    while attempt < 50:
+        mut id := ""
+        repeat 4:
+            i := rand.IntN(32)
+            id = id + ID_ALPHABET.substr(i, 1)
+        end
+        rows := sqlite.Query(Db(), "SELECT id FROM orders WHERE id = " + Quote(id))
+        taken := sqlite.Next(rows)
+        _f := sqlite.Finish(rows)
+        if !taken: ret id end
+        attempt = attempt + 1
+    end
+    ret "X" + str.FromInt(timex.NowSeconds() as i64)
+end
+
+// Opens the database and creates the schema if this is a first run.
+pub func Open(path: str): bool:
+    d := sqlite.Open(path)
+    if !sqlite.Ok(d): ret false end
+    _handle = d.handle
+    _e1 := sqlite.Exec(Db(), "PRAGMA journal_mode = WAL;")
+    _e2 := sqlite.Exec(Db(), "PRAGMA busy_timeout = 5000;")
+    _e3 := sqlite.Exec(Db(), SCHEMA)
+    rand.SeedAuto()
+    ret true
+end
+
+pub func Close():
+    if _handle == null: ret end
+    _c := sqlite.Close(Db())
+    _handle = null as void*
+end
+
+// Writes an order back in full. Every state change goes through here, so a
+// crash can never leave a half-written row.
+pub func Save(o: types.Order):
+    sql := "UPDATE orders SET " +
+        "chat_id = " + str.FromInt(o.chat_id) +
+        ", account_mode = " + Quote(o.account_mode) +
+        ", symbol = " + Quote(o.symbol) +
+        ", direction = " + Quote(o.direction) +
+        ", trigger_price = " + Num(o.trigger_price) +
+        ", trigger_mode = " + Quote(o.trigger_mode) +
+        ", approach_side = " + Quote(o.approach_side) +
+        ", amount = " + Num(o.amount) +
+        ", expiry_mode = " + Quote(o.expiry_mode) +
+        ", duration_seconds = " + str.FromInt(o.duration_seconds) +
+        ", candle_count = " + str.FromInt(o.candle_count) +
+        ", timeframe_seconds = " + str.FromInt(o.timeframe_seconds) +
+        ", chart_type = " + Quote(o.chart_type) +
+        ", status = " + Quote(o.status) +
+        ", reference_price = " + NumOrNull(o.reference_price, o.has_reference) +
+        ", valid_until = " + Num(o.valid_until) +
+        ", triggered_price = " + Num(o.triggered_price) +
+        ", triggered_at = " + Num(o.triggered_at) +
+        ", deal_id = " + TextOrNull(o.deal_id) +
+        ", open_price = " + Num(o.open_price) +
+        ", opened_at = " + Num(o.opened_at) +
+        ", closes_at = " + Num(o.closes_at) +
+        ", close_price = " + Num(o.close_price) +
+        ", closed_at = " + Num(o.closed_at) +
+        ", profit = " + NumOrNull(o.profit, o.has_profit) +
+        ", note = " + TextOrNull(o.note) +
+        ", updated_at = " + Num(timex.NowSeconds()) +
+        " WHERE id = " + Quote(o.id)
+    _e := sqlite.Exec(Db(), sql)
+end
+
+// Stores a brand new order and hands back the row as it now stands.
+pub func Create(o: types.Order): types.Order:
+    mut row := o
+    row.id = FreshId()
+    row.status = types.ST_PENDING
+    row.created_at = timex.NowSeconds()
+    row.updated_at = row.created_at
+
+    sql := "INSERT INTO orders (" + COLUMNS + ") VALUES (" +
+        Quote(row.id) + ", " +
+        str.FromInt(row.chat_id) + ", " +
+        Quote(row.account_mode) + ", " +
+        Quote(row.symbol) + ", " +
+        Quote(row.direction) + ", " +
+        Num(row.trigger_price) + ", " +
+        Quote(row.trigger_mode) + ", " +
+        Quote(row.approach_side) + ", " +
+        Num(row.amount) + ", " +
+        Quote(row.expiry_mode) + ", " +
+        str.FromInt(row.duration_seconds) + ", " +
+        str.FromInt(row.candle_count) + ", " +
+        str.FromInt(row.timeframe_seconds) + ", " +
+        Quote(row.chart_type) + ", " +
+        Quote(row.status) + ", " +
+        NumOrNull(row.reference_price, row.has_reference) + ", " +
+        Num(row.valid_until) + ", " +
+        Num(row.triggered_price) + ", " +
+        Num(row.triggered_at) + ", " +
+        TextOrNull(row.deal_id) + ", " +
+        Num(row.open_price) + ", " +
+        Num(row.opened_at) + ", " +
+        Num(row.closes_at) + ", " +
+        Num(row.close_price) + ", " +
+        Num(row.closed_at) + ", " +
+        NumOrNull(row.profit, row.has_profit) + ", " +
+        TextOrNull(row.note) + ", " +
+        Num(row.created_at) + ", " +
+        Num(row.updated_at) + ")"
+    _e := sqlite.Exec(Db(), sql)
+    ret row
+end
+
+// An order by id. The caller checks `.id` for "" to see whether it existed.
+pub func Get(id: str): types.Order:
+    mut found := types.Order {}
+    rows := sqlite.Query(Db(), "SELECT " + COLUMNS + " FROM orders WHERE id = " + Quote(id))
+    if sqlite.Next(rows): found = ReadOrder(rows) end
+    _f := sqlite.Finish(rows)
+    ret found
+end
+
+pub func FindByDealId(deal_id: str): types.Order:
+    mut found := types.Order {}
+    if deal_id.len() == 0: ret found end
+    rows := sqlite.Query(Db(), "SELECT " + COLUMNS + " FROM orders WHERE deal_id = " + Quote(deal_id))
+    if sqlite.Next(rows): found = ReadOrder(rows) end
+    _f := sqlite.Finish(rows)
+    ret found
+end
+
+// Every order the engine should still be following, oldest first.
+pub func ListActive(): Vector<types.Order>:
+    ret QueryOrders("SELECT " + COLUMNS + " FROM orders WHERE status IN ('pending','armed','placing','open') ORDER BY created_at ASC")
+end
+
+pub func ListActiveByChat(chat_id: i64): Vector<types.Order>:
+    ret QueryOrders("SELECT " + COLUMNS + " FROM orders WHERE chat_id = " + str.FromInt(chat_id) +
+        " AND status IN ('pending','armed','placing','open') ORDER BY created_at ASC")
+end
+
+pub func ListRecentByChat(chat_id: i64, limit: i64): Vector<types.Order>:
+    ret QueryOrders("SELECT " + COLUMNS + " FROM orders WHERE chat_id = " + str.FromInt(chat_id) +
+        " ORDER BY created_at DESC LIMIT " + str.FromInt(limit))
+end
+
+pub func CountActiveByChat(chat_id: i64): i64:
+    mut n := 0 as i64
+    rows := sqlite.Query(Db(), "SELECT COUNT(*) FROM orders WHERE chat_id = " + str.FromInt(chat_id) +
+        " AND status IN ('pending','armed','placing','open')")
+    if sqlite.Next(rows): n = sqlite.Int64(rows, 0) end
+    _f := sqlite.Finish(rows)
+    ret n
+end
+
+// Wins, losses, draws and net profit since a moment, for /stats.
+pub func Summary(chat_id: i64, since: f64, won &: i64, lost &: i64, draw &: i64, profit &: f64):
+    won = 0 as i64
+    lost = 0 as i64
+    draw = 0 as i64
+    profit = 0.0
+    rows := sqlite.Query(Db(),
+        "SELECT status, COALESCE(profit, 0) FROM orders WHERE chat_id = " + str.FromInt(chat_id) +
+        " AND closed_at IS NOT NULL AND closed_at >= " + Num(since))
+    while sqlite.Next(rows):
+        status := sqlite.Text(rows, 0)
+        profit = profit + sqlite.Float(rows, 1)
+        if status == types.ST_WON: won = won + 1 as i64 end
+        if status == types.ST_LOST: lost = lost + 1 as i64 end
+        if status == types.ST_DRAW: draw = draw + 1 as i64 end
+    end
+    _f := sqlite.Finish(rows)
+end
+
+// The settings table is a plain key/value store; the bot keeps the defaults
+// a user changes with /set there, so they outlive a restart.
+pub func PutSetting(key: str, value: str):
+    _e := sqlite.Exec(Db(), "INSERT INTO settings (key, value) VALUES (" + Quote(key) + ", " + Quote(value) +
+        ") ON CONFLICT(key) DO UPDATE SET value = " + Quote(value))
+end
+
+pub func GetSetting(key: str, fallback: str): str:
+    mut value := fallback
+    rows := sqlite.Query(Db(), "SELECT value FROM settings WHERE key = " + Quote(key))
+    if sqlite.Next(rows): value = sqlite.Text(rows, 0) end
+    _f := sqlite.Finish(rows)
+    ret value
+end
+
+pub func GetSettingInt(key: str, fallback: i64): i64:
+    v := GetSetting(key, "")
+    if v.len() == 0: ret fallback end
+    ret str.ToInt(v) as i64
+end
+
+pub func GetSettingFloat(key: str, fallback: f64): f64:
+    v := GetSetting(key, "")
+    if v.len() == 0: ret fallback end
+    ret str.ToFloat(v)
+end

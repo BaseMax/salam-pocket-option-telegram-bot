@@ -1,0 +1,327 @@
+// The same properties the TypeScript suite pins, checked against the Salam
+// port: durations, symbols, the one-line command, the trading rules, and a
+// round trip through SQLite.
+package main
+
+import os
+import str
+import testing
+import types "types.salam"
+import timex "timex.salam"
+import symbols "symbols.salam"
+import parse "parse.salam"
+import engine "engine.salam"
+import store "store.salam"
+import jsonx "jsonx.salam"
+import ssid "ssid.salam"
+import texts "texts.salam"
+import config "config.salam"
+
+// The stdlib's assertions take no message; these keep one, because a
+// failing line should say what property it was checking.
+func EqInt(got: i64, want: i64, message: str):
+    testing.AssertMsg(got == want, message)
+end
+
+func EqStr(got: str, want: str, message: str):
+    testing.AssertMsg(got == want, message)
+end
+
+func EqFloat(got: f64, want: f64, message: str):
+    testing.AssertMsg(got > want - 0.000001 && got < want + 0.000001, message)
+end
+
+func Truthy(condition: bool, message: str):
+    testing.AssertMsg(condition, message)
+end
+
+func Falsy(condition: bool, message: str):
+    testing.AssertMsg(!condition, message)
+end
+
+func Has(haystack: str, needle: str, message: str):
+    testing.AssertMsg(str.Contains(haystack, needle), message)
+end
+
+func TestDurations():
+    EqInt(timex.ParseDuration("60"), 60, "a bare number is seconds")
+    EqInt(timex.ParseDuration("31s"), 31, "seconds suffix")
+    EqInt(timex.ParseDuration("1m"), 60, "minutes")
+    EqInt(timex.ParseDuration("1M"), 60, "case does not matter")
+    EqInt(timex.ParseDuration("30 M"), 1800, "a space does not matter")
+    EqInt(timex.ParseDuration("2h"), 7200, "hours")
+    EqInt(timex.ParseDuration("1.5m"), 90, "a fraction of a unit")
+    EqInt(timex.ParseDuration("5 MINUTES"), 300, "long unit names")
+    EqInt(timex.ParseDuration("2hours"), 7200, "no space, long name")
+    EqInt(timex.ParseDuration("3 days"), 259200, "days")
+    EqInt(timex.ParseDuration("1 week"), 604800, "weeks")
+    EqInt(timex.ParseDuration("1 month"), 2592000, "months")
+    EqInt(timex.ParseDuration("1h 30m"), 5400, "two parts")
+    EqInt(timex.ParseDuration("1H30M"), 5400, "two parts, no space")
+
+    EqInt(timex.ParseDuration("۳۰ دقیقه"), 1800, "Persian digits and unit")
+    EqInt(timex.ParseDuration("90 ثانیه"), 90, "Persian seconds")
+    EqInt(timex.ParseDuration("۲ ساعت و ۱۵ دقیقه"), 8100, "Persian, joined with و")
+    EqInt(timex.ParseDuration("1 روز"), 86400, "Persian days")
+    EqInt(timex.ParseDuration("۱٫۵ دقیقه"), 90, "Persian decimal separator")
+
+    EqInt(timex.ParseDuration(""), 0 - 1, "empty is invalid")
+    EqInt(timex.ParseDuration("abc"), 0 - 1, "words are invalid")
+    EqInt(timex.ParseDuration("5 bananas"), 0 - 1, "an unknown unit is invalid")
+    EqInt(timex.ParseDuration("0"), 0 - 1, "zero is not a duration")
+    EqInt(timex.ParseDuration("1:30"), 0 - 1, "a clock time is not a duration")
+end
+
+func TestFormatting():
+    EqStr(timex.FormatDuration(5 as i64), "5s", "seconds")
+    EqStr(timex.FormatDuration(90 as i64), "1m30s", "minutes and seconds")
+    EqStr(timex.FormatDuration(5400 as i64), "1h30m", "hours and minutes")
+    EqStr(timex.FormatDuration(86400 as i64), "1d", "days")
+    EqStr(timex.FormatDurationFa(5400 as i64), "1 ساعت و 30 دقیقه", "Persian duration")
+    EqStr(timex.FormatDurationFa(90061 as i64), "1 روز و 1 ساعت و 1 دقیقه و 1 ثانیه", "every Persian unit")
+
+    // Every compact form reads back as the same number of seconds.
+    EqInt(timex.ParseDuration(timex.FormatDuration(5400 as i64)), 5400, "round trip 5400")
+    EqInt(timex.ParseDuration(timex.FormatDuration(90061 as i64)), 90061, "round trip 90061")
+
+    EqStr(timex.FormatTime(0.0, 0 as i64), "1970-01-01 00:00:00", "the epoch in UTC")
+    EqStr(timex.FormatTime(0.0, 210 as i64), "1970-01-01 03:30:00", "the epoch in Tehran")
+    EqStr(timex.FormatPrice(1.95320), "1.9532", "trailing zeros are trimmed")
+    EqStr(timex.FormatMoney(0.0 - 5.0), "-$5.00", "a loss keeps its sign")
+end
+
+func TestSymbols():
+    EqStr(symbols.Normalize("gbpaud_otc"), "GBPAUD_otc", "otc suffix")
+    EqStr(symbols.Normalize("GBPAUD-OTC"), "GBPAUD_otc", "a dash is a separator")
+    EqStr(symbols.Normalize("eur/usd"), "EURUSD", "a slash is a separator")
+    EqStr(symbols.Normalize("  eurusd  "), "EURUSD", "spaces are trimmed")
+    EqStr(symbols.Twin("EURUSD"), "EURUSD_otc", "the weekend listing")
+    EqStr(symbols.Twin("EURUSD_otc"), "EURUSD", "and back")
+    Truthy(symbols.IsOtc("EURUSD_otc"), "otc detected")
+    Falsy(symbols.IsOtc("EURUSD"), "not otc")
+
+    mut assets := Vector {} as Vector<symbols.Asset>
+    defer assets.free()
+    assets.push(symbols.Asset { symbol = "EURUSD", name = "Euro/Dollar", payout = 70 as i64, is_open = true })
+    assets.push(symbols.Asset { symbol = "EURUSD_otc", name = "Euro/Dollar OTC", payout = 90 as i64, is_open = true })
+    assets.push(symbols.Asset { symbol = "GBPJPY", name = "Pound/Yen", payout = 95 as i64, is_open = false })
+
+    mut status := ""
+    mut matched := symbols.Asset {}
+    mut twin := symbols.Asset {}
+    _n := symbols.Resolve("eurusd", assets, status, matched, twin)
+    EqStr(status, "exact", "an exact match")
+    EqStr(twin.symbol, "EURUSD_otc", "its twin comes along")
+
+    _u := symbols.Resolve("zzzz", assets, status, matched, twin)
+    EqStr(status, "unknown", "an unknown symbol")
+
+    mut ranked := symbols.Suggest("EUR", assets)
+    defer ranked.free()
+    EqInt(ranked.len(), 2, "two suggestions")
+    EqStr(ranked.get(0).symbol, "EURUSD_otc", "the better payout leads")
+end
+
+func TestOrderCommand():
+    mut spec := types.OrderSpec {}
+    problem := parse.ParseOrder("gbpaud_otc buy 1.9532", spec)
+    EqStr(problem, "", "a minimal command parses")
+    EqStr(spec.symbol, "GBPAUD_otc", "symbol")
+    EqStr(spec.direction, types.CALL, "direction")
+
+    mut full := types.OrderSpec {}
+    p2 := parse.ParseOrder("EURUSD sell 1.0854 tf=5m dur=90 amount=7 acc=real entry=next chart=ha valid=30m", full)
+    EqStr(p2, "", "the full tail parses")
+    EqInt(full.timeframe_seconds, 300, "tf")
+    EqInt(full.duration_seconds, 90, "dur")
+    EqStr(full.account_mode, types.MODE_REAL, "acc")
+    EqStr(full.chart_type, types.CHART_HEIKIN_ASHI, "chart")
+    EqStr(full.trigger_mode, types.TRIGGER_NEXT_CANDLE, "entry")
+    EqInt(full.valid_for_seconds, 1800, "valid")
+
+    mut persian := types.OrderSpec {}
+    p3 := parse.ParseOrder("EURUSD فروش ۱٫۰۸۵۴ dur=۲دقیقه acc=واقعی chart=هایکن exp=شناور", persian)
+    EqStr(p3, "", "Persian words parse")
+    EqStr(persian.direction, types.PUT, "Persian direction")
+    EqInt(persian.duration_seconds, 120, "Persian duration")
+    EqStr(persian.expiry_mode, types.EXPIRY_FLOATING, "Persian expiry")
+
+    mut bad := types.OrderSpec {}
+    Truthy(parse.ParseOrder("EURUSD sideways 1.08", bad).len() > 0, "a bad direction is refused")
+    Truthy(parse.ParseOrder("EURUSD buy 1.08 nope=1", bad).len() > 0, "an unknown key is refused")
+    Truthy(parse.ParseOrder("EURUSD buy zero", bad).len() > 0, "a bad price is refused")
+end
+
+func TestTrigger():
+    EqStr(engine.ResolveApproachSide(1.10, 1.05, true), types.SIDE_BELOW, "the market sits below")
+    EqStr(engine.ResolveApproachSide(1.00, 1.05, true), types.SIDE_ABOVE, "the market sits above")
+    EqStr(engine.ResolveApproachSide(1.05, 0.0, false), types.SIDE_ANY, "no reference yet")
+
+    below := types.Order { trigger_price = 1.10, approach_side = types.SIDE_BELOW }
+    Falsy(engine.IsTouched(below, 1.05, true, 1.09), "not yet risen into it")
+    Truthy(engine.IsTouched(below, 1.09, true, 1.10), "exactly on it")
+    Truthy(engine.IsTouched(below, 1.09, true, 1.15), "gapped straight over it")
+
+    above := types.Order { trigger_price = 1.00, approach_side = types.SIDE_ABOVE }
+    Falsy(engine.IsTouched(above, 1.05, true, 1.01), "not yet fallen into it")
+    Truthy(engine.IsTouched(above, 1.01, true, 0.99), "fell through it")
+
+    any := types.Order { trigger_price = 1.05, approach_side = types.SIDE_ANY }
+    Truthy(engine.IsTouched(any, 1.04, true, 1.06), "crossed from below")
+    Truthy(engine.IsTouched(any, 1.06, true, 1.04), "crossed from above")
+    Falsy(engine.IsTouched(any, 1.06, true, 1.07), "never crossed")
+end
+
+func TestExpiry():
+    fixed := types.Order { expiry_mode = types.EXPIRY_FIXED, duration_seconds = 90 as i64 }
+    mut close_at := 0.0
+    mut rolled := 0 as i64
+    duration := engine.ResolveExpiry(fixed, 1000.0, 30 as i64, close_at, rolled)
+    EqInt(duration, 90, "a fixed trade is sent as seconds")
+    EqFloat(close_at, 0.0, "and never as an absolute close")
+
+    floating := types.Order { expiry_mode = types.EXPIRY_FLOATING, timeframe_seconds = 60 as i64, candle_count = 1 as i64 }
+    entry := 1787911237.0
+    _d2 := engine.ResolveExpiry(floating, entry, 5 as i64, close_at, rolled)
+    EqFloat(close_at, timex.CandleCloseTime(entry, 60 as i64), "it lands on the candle close")
+    EqInt(rolled, 0, "with nothing to roll")
+
+    three := types.Order { expiry_mode = types.EXPIRY_FLOATING, timeframe_seconds = 60 as i64, candle_count = 3 as i64 }
+    _d3 := engine.ResolveExpiry(three, entry, 5 as i64, close_at, rolled)
+    EqFloat(close_at, timex.CandleCloseTime(entry, 60 as i64) + 120.0, "three candles out")
+
+    // Five seconds before the minute closes, with a 30 second floor.
+    late := 1787911255.0
+    _d4 := engine.ResolveExpiry(floating, late, 30 as i64, close_at, rolled)
+    EqInt(rolled, 1, "it rolls one candle forward")
+    Truthy(close_at - late >= 30.0, "and clears the broker minimum")
+end
+
+func TestJson():
+    mut rows := jsonx.SplitArray(`[["EURUSD",1787911237.5,1.08541],["GBPAUD_otc",1787911238,1.9532]]`)
+    EqInt(rows.len(), 2, "two ticks")
+    mut cols := jsonx.SplitArray(rows.get(0))
+    EqStr(jsonx.Unquote(cols.get(0)), "EURUSD", "the symbol")
+    EqFloat(jsonx.AsFloat(cols.get(2)), 1.08541, "the price")
+    cols.free()
+    rows.free()
+
+    obj := `{"id":"deal-9","profit":1.8,"closeTime":1787911300,"amount":null}`
+    EqStr(jsonx.Unquote(jsonx.Field(obj, "id")), "deal-9", "a string field")
+    EqFloat(jsonx.FieldFloat(obj, "profit"), 1.8, "a number field")
+    Truthy(jsonx.IsNull(jsonx.Field(obj, "amount")), "null is not zero")
+    EqStr(jsonx.FieldAny(obj, "closeTimestamp", "closeTime"), "1787911300", "either spelling")
+    EqStr(jsonx.ElementAt(`[{"a":[1,2]},"x"]`, 1), `"x"`, "nested commas are skipped")
+end
+
+func TestSsid():
+    legacy := ssid.Parse(`42["auth",{"session":"abc","isDemo":1,"uid":5,"platform":1}]`, types.MODE_DEMO, 0 as i64)
+    Truthy(legacy.ok, "the older dialect is read")
+    EqInt(legacy.uid, 5, "its uid")
+    Truthy(str.Contains(legacy.frame, `"session":"abc"`), "and rebuilt as a session frame")
+
+    modern := ssid.Parse(`42["auth",{"sessionToken":"tok","uid":"7","lang":"fa"}]`, types.MODE_REAL, 0 as i64)
+    Truthy(modern.ok, "the current dialect is read")
+    Truthy(modern.has_init, "which also needs a user_init frame")
+    Truthy(str.Contains(modern.frame, "cabinet/quick-high-low"), "the real cabinet url")
+
+    Falsy(ssid.Parse("", types.MODE_DEMO, 0 as i64).ok, "empty is refused")
+    Falsy(ssid.Parse("bare-session", types.MODE_DEMO, 0 as i64).ok, "a bare session needs a uid")
+    Truthy(ssid.Parse("bare-session", types.MODE_DEMO, 9 as i64).ok, "and works with one")
+end
+
+func TestLimits():
+    mut c := config.Config {}
+    c.min_amount = 1.0
+    c.max_amount = 100.0
+    c.min_duration = 5 as i64
+    c.max_duration = 3600 as i64
+
+    EqStr(config.CheckLimits(c, 5.0, types.EXPIRY_FIXED, 60 as i64, 60 as i64, 1 as i64), "", "an ordinary order passes")
+    Truthy(config.CheckLimits(c, 0.5, types.EXPIRY_FIXED, 60 as i64, 60 as i64, 1 as i64).len() > 0, "too small an amount")
+    Truthy(config.CheckLimits(c, 500.0, types.EXPIRY_FIXED, 60 as i64, 60 as i64, 1 as i64).len() > 0, "too large an amount")
+    Truthy(config.CheckLimits(c, 5.0, types.EXPIRY_FIXED, 2 as i64, 60 as i64, 1 as i64).len() > 0, "too short a trade")
+    Truthy(config.CheckLimits(c, 5.0, types.EXPIRY_FLOATING, 60 as i64, 3600 as i64, 2 as i64).len() > 0, "too long a floating trade")
+end
+
+func TestStore():
+    Truthy(store.Open(":memory:"), "an in-memory database opens")
+
+    o := types.Order {}
+    o.chat_id = 1 as i64
+    o.symbol = "GBPAUD_otc"
+    o.direction = types.CALL
+    o.trigger_price = 1.9532
+    o.amount = 3.0
+    o.reference_price = 1.9
+    o.has_reference = true
+    o.approach_side = types.SIDE_BELOW
+
+    saved := store.Create(o)
+    EqInt(saved.id.len(), 4, "the id is four characters")
+    EqStr(saved.status, types.ST_PENDING, "a new order is pending")
+
+    back := store.Get(saved.id)
+    EqStr(back.symbol, "GBPAUD_otc", "the symbol survives the round trip")
+    EqFloat(back.trigger_price, 1.9532, "and so does the price")
+    Truthy(back.has_reference, "a reference price that was set reads as set")
+
+    mut active := store.ListActive()
+    EqInt(active.len(), 1, "it is active")
+    active.free()
+
+    mut settled := back
+    settled.status = types.ST_WON
+    settled.profit = 2.7
+    settled.has_profit = true
+    settled.closed_at = timex.NowSeconds()
+    settled.deal_id = "deal-1"
+    store.Save(settled)
+
+    EqStr(store.FindByDealId("deal-1").id, saved.id, "found by its deal id")
+    EqInt(store.CountActiveByChat(1 as i64), 0, "and no longer active")
+
+    mut won := 0 as i64
+    mut lost := 0 as i64
+    mut draw := 0 as i64
+    mut profit := 0.0
+    store.Summary(1 as i64, 0.0, won, lost, draw, profit)
+    EqInt(won, 1, "one win")
+    EqFloat(profit, 2.7, "and its profit")
+
+    store.PutSetting("amount", "7")
+    EqFloat(store.GetSettingFloat("amount", 1.0), 7.0, "a setting is stored")
+    EqInt(store.GetSettingInt("missing", 42 as i64), 42, "and a missing one falls back")
+    store.Close()
+end
+
+func TestCopy():
+    o := types.Order {}
+    o.id = "A7K2"
+    o.symbol = "EURUSD"
+    o.direction = types.PUT
+    o.status = types.ST_OPEN
+
+    card := texts.RenderOrder(o, 210 as i64, false)
+    Has(card, "#A7K2", "the card names the order")
+    Has(card, "EURUSD", "and its symbol")
+    Has(card, "🔴 فروش", "and its direction")
+    EqStr(texts.EscapeHtml("bad <input> & more"), "bad &lt;input&gt; &amp; more", "html is escaped")
+    Has(texts.ChartGuide(), "هایکن‌آشی", "the chart guide explains heikin-ashi")
+    Has(texts.TimeGuide(), "۳۰ دقیقه", "the time guide shows a Persian example")
+end
+
+func main:
+    TestDurations()
+    TestFormatting()
+    TestSymbols()
+    TestOrderCommand()
+    TestTrigger()
+    TestExpiry()
+    TestJson()
+    TestSsid()
+    TestLimits()
+    TestStore()
+    TestCopy()
+    os.Exit(testing.Summary())
+end

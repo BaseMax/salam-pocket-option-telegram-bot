@@ -1,0 +1,121 @@
+// A scripted conversation: the same updates Telegram would deliver, fed
+// straight to the dispatcher. It never calls getUpdates, so it cannot take
+// updates from another instance of the bot that is already polling.
+package main
+
+import str
+import time
+import telegram.bot
+import config "config.salam"
+import store "store.salam"
+import settings "settings.salam"
+import engine "engine.salam"
+import tgbot "tgbot.salam"
+
+func Message(chat_id: i64, id: i64, text: str): bot.Update:
+    ret bot.Update {
+        update_id = id,
+        has_message = true,
+        message = bot.Message { message_id = id, text = text, chat = bot.Chat { id = chat_id, chat_type = "private" } }
+    }
+end
+
+func Tap(chat_id: i64, id: i64, panel_id: i64, data: str, panel_text: str): bot.Update:
+    ret bot.Update {
+        update_id = id,
+        has_callback_query = true,
+        callback_query = bot.CallbackQuery {
+            id = str.FromInt(id),
+            data = data,
+            has_message = true,
+            message = bot.Message { message_id = panel_id, text = panel_text, chat = bot.Chat { id = chat_id, chat_type = "private" } }
+        }
+    }
+end
+
+func main:
+    c := config.Load()
+    if !config.Ok(c):
+        println "TELEGRAM_BOT_TOKEN is missing"
+        ret
+    end
+
+    if !store.Open("/tmp/salam-dryrun.sqlite"):
+        println "could not open the scratch database"
+        ret
+    end
+    settings.Init(c)
+    if !tgbot.Init(c):
+        ret
+    end
+    engine.Start(c)
+
+    ids := str.Split(c.admin_ids, ",")
+    chat_id := str.ToInt(str.Trim(ids.get(0))) as i64
+    println "driving a conversation in chat " + str.FromInt(chat_id)
+
+    println "→ /start"
+    tgbot.Dispatch(Message(chat_id, 1 as i64, "/start"))
+
+    println "→ /settings"
+    tgbot.Dispatch(Message(chat_id, 2 as i64, "/settings"))
+
+    println "→ /order with a bad direction"
+    tgbot.Dispatch(Message(chat_id, 3 as i64, "/order EURUSD sideways 1.08"))
+
+    println "→ /new (the panel)"
+    tgbot.Dispatch(Message(chat_id, 4 as i64, "/new"))
+
+    println "→ tapping the chart button"
+    // The panel is the last message the bot sent; its id is not visible from
+    // here, so the tap is aimed at the live panel by passing 0.
+    tgbot.Dispatch(Tap(chat_id, 5 as i64, 0 as i64, "w:chart", ""))
+    time.Sleep(500)
+
+    println "→ choosing heikin-ashi"
+    tgbot.Dispatch(Tap(chat_id, 6 as i64, 0 as i64, "w:chart:heikin_ashi", ""))
+    time.Sleep(500)
+
+    println "→ tapping ✍️ price, then typing one"
+    tgbot.Dispatch(Tap(chat_id, 7 as i64, 0 as i64, "w:price", ""))
+    time.Sleep(500)
+    tgbot.Dispatch(Message(chat_id, 8 as i64, "۱٫۱۶۳۵۸"))
+    time.Sleep(500)
+
+    println "→ cancelling the panel"
+    tgbot.Dispatch(Tap(chat_id, 9 as i64, 0 as i64, "w:cancel", ""))
+
+    println "→ /order (a real pending order, far from the market)"
+    tgbot.Dispatch(Message(chat_id, 10 as i64, "/order EURUSD_otc buy 9.99999 dur=60 amount=1 acc=demo valid=2m"))
+
+    println "→ /list"
+    tgbot.Dispatch(Message(chat_id, 11 as i64, "/list"))
+
+    println "→ /stats"
+    tgbot.Dispatch(Message(chat_id, 12 as i64, "/stats"))
+
+    println "→ letting the engine run for a few seconds"
+    mut i := 0
+    while i < 30:
+        engine.Step(100)
+        tgbot.Notify()
+        i = i + 1
+    end
+
+    mut active := store.ListActiveByChat(chat_id)
+    println "active orders in the scratch database: " + str.FromInt(active.len() as i64)
+    if active.len() > 0:
+        o := active.get(0)
+        println "  " + o.id + " " + o.symbol + " " + o.status + " side=" + o.approach_side + " ref=" + str.FromFloat(o.reference_price)
+        println "→ cancelling it"
+        tgbot.Dispatch(Message(chat_id, 13 as i64, "/cancel " + o.id))
+    end
+    active.free()
+
+    println "→ /status"
+    tgbot.Dispatch(Message(chat_id, 14 as i64, "/status"))
+
+    engine.Stop()
+    store.Close()
+    println "done"
+end

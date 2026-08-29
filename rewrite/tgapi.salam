@@ -1,0 +1,179 @@
+// The Telegram calls this bot makes, and the inline keyboards it draws.
+//
+// telegram.bot covers sending and polling; anything that needs parse_mode,
+// a keyboard or an alert goes through Call() with its own parameters, which
+// is the same transport with nothing hidden.
+package tgapi
+
+import str
+import telegram.bot
+import encoding.json
+import texts "texts.salam"
+
+// An inline keyboard being built, as the JSON Telegram wants.
+@en "Keyboard"
+@fa "صفحه کلید"
+pub struct Keyboard:
+    pub rows: str = ""
+    pub current: str = ""
+    pub empty: bool = true
+end
+
+func Params(): HashMap<str, str>:
+    ret HashMap {} as HashMap<str, str>
+end
+
+func WithChat(chat_id: i64): HashMap<str, str>:
+    mut p := Params()
+    p.put("chat_id", str.FromInt(chat_id))
+    ret p
+end
+
+func CloseRow(k &: Keyboard):
+    if k.current.len() == 0: ret end
+    if k.rows.len() > 0: k.rows = k.rows + "," end
+    k.rows = k.rows + "[" + k.current + "]"
+    k.current = ""
+end
+
+pub func NewKeyboard(): Keyboard:
+    ret Keyboard {}
+end
+
+// Adds a button to the row being built.
+pub func Button(k &: Keyboard, label: str, data: str):
+    if k.current.len() > 0: k.current = k.current + "," end
+    k.current = k.current + `{"text":"` + json.Escape(label) + `","callback_data":"` + json.Escape(data) + `"}`
+    k.empty = false
+end
+
+// Ends the current row; the next Button starts a new one.
+pub func Row(k &: Keyboard):
+    CloseRow(k)
+end
+
+pub func IsEmpty(k: Keyboard): bool:
+    ret k.empty
+end
+
+pub func KeyboardJson(k: Keyboard): str:
+    mut copy := k
+    CloseRow(copy)
+    ret `{"inline_keyboard":[` + copy.rows + `]}`
+end
+
+// A reply box the user's phone opens for them, with a hint inside it.
+pub func ForceReplyJson(placeholder: str): str:
+    ret `{"force_reply":true,"input_field_placeholder":"` + json.Escape(placeholder) + `"}`
+end
+
+// Sends an HTML message and hands back its message id, or 0.
+pub func Send(b: bot.Bot, chat_id: i64, text: str, markup: str): i64:
+    mut p := WithChat(chat_id)
+    p.put("text", text)
+    p.put("parse_mode", "HTML")
+    p.put("disable_web_page_preview", "true")
+    if markup.len() > 0: p.put("reply_markup", markup) end
+
+    resp := bot.Call(b, "sendMessage", p)
+    if !resp.ok: ret 0 as i64 end
+    ret str.ToInt(json.Get(resp.result, "message_id")) as i64
+end
+
+pub func SendPlain(b: bot.Bot, chat_id: i64, text: str): i64:
+    ret Send(b, chat_id, text, "")
+end
+
+// Rewrites a message. Returns false when Telegram refused, which for an
+// edit that changes nothing is not a failure worth reporting.
+pub func Edit(b: bot.Bot, chat_id: i64, message_id: i64, text: str, markup: str): bool:
+    mut p := WithChat(chat_id)
+    p.put("message_id", str.FromInt(message_id))
+    p.put("text", text)
+    p.put("parse_mode", "HTML")
+    p.put("disable_web_page_preview", "true")
+    if markup.len() > 0: p.put("reply_markup", markup) end
+
+    resp := bot.Call(b, "editMessageText", p)
+    if resp.ok: ret true end
+    ret str.Contains(resp.description, "message is not modified")
+end
+
+// Rewrites a message we no longer have the formatting for: whatever
+// Telegram still holds, plus a line saying it is over.
+pub func EditPlain(b: bot.Bot, chat_id: i64, message_id: i64, text: str): bool:
+    mut p := WithChat(chat_id)
+    p.put("message_id", str.FromInt(message_id))
+    p.put("text", text)
+    resp := bot.Call(b, "editMessageText", p)
+    if resp.ok: ret true end
+    ret str.Contains(resp.description, "message is not modified")
+end
+
+pub func DropKeyboard(b: bot.Bot, chat_id: i64, message_id: i64):
+    mut p := WithChat(chat_id)
+    p.put("message_id", str.FromInt(message_id))
+    _r := bot.Call(b, "editMessageReplyMarkup", p)
+end
+
+pub func Delete(b: bot.Bot, chat_id: i64, message_id: i64):
+    mut p := WithChat(chat_id)
+    p.put("message_id", str.FromInt(message_id))
+    _r := bot.Call(b, "deleteMessage", p)
+end
+
+// The little toast on a tapped button; `alert` makes it a dialog instead.
+pub func Answer(b: bot.Bot, query_id: str, text: str, alert: bool):
+    mut p := Params()
+    p.put("callback_query_id", query_id)
+    if text.len() > 0: p.put("text", text) end
+    if alert: p.put("show_alert", "true") end
+    _r := bot.Call(b, "answerCallbackQuery", p)
+end
+
+// The command list Telegram shows in the chat menu.
+pub func PublishCommands(b: bot.Bot):
+    commands := `[` +
+        `{"command":"new","description":"ساخت سفارش جدید"},` +
+        `{"command":"order","description":"ساخت سریع سفارش"},` +
+        `{"command":"list","description":"سفارش‌های فعال"},` +
+        `{"command":"cancel","description":"لغو سفارش"},` +
+        `{"command":"balance","description":"موجودی حساب"},` +
+        `{"command":"price","description":"قیمت لحظه‌ای نماد"},` +
+        `{"command":"symbols","description":"فهرست و جست‌وجوی نمادها"},` +
+        `{"command":"status","description":"وضعیت اتصال‌ها"},` +
+        `{"command":"history","description":"آخرین سفارش‌ها"},` +
+        `{"command":"stats","description":"آمار امروز"},` +
+        `{"command":"settings","description":"تنظیمات"},` +
+        `{"command":"mode","description":"حساب دمو یا ریل"},` +
+        `{"command":"session","description":"ثبت نشست پاکت آپشن"},` +
+        `{"command":"help","description":"راهنما"}` +
+        `]`
+    mut p := Params()
+    p.put("commands", commands)
+    _r := bot.Call(b, "setMyCommands", p)
+end
+
+// A "⏳ working…" placeholder that becomes the answer, so a slow command
+// still feels alive.
+pub func Notice(b: bot.Bot, chat_id: i64, text: str): i64:
+    ret SendPlain(b, chat_id, text)
+end
+
+pub func Finish(b: bot.Bot, chat_id: i64, message_id: i64, text: str):
+    if message_id == 0:
+        _m := Send(b, chat_id, text, "")
+        ret
+    end
+    if !Edit(b, chat_id, message_id, text, ""):
+        _m := Send(b, chat_id, text, "")
+    end
+end
+
+pub func Warn(b: bot.Bot, chat_id: i64, message: str):
+    _m := Send(b, chat_id, "⚠️ " + message, "")
+end
+
+pub func WarnEscaped(b: bot.Bot, chat_id: i64, message: str):
+    _m := Send(b, chat_id, "⚠️ " + texts.EscapeHtml(message), "")
+end

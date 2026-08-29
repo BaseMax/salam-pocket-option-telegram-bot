@@ -1,0 +1,257 @@
+// Every word the user reads. Keeping the copy in one file is what let the
+// Persian wording be reviewed as a whole rather than hunted through the
+// command handlers.
+package texts
+
+import str
+import types "types.salam"
+import timex "timex.salam"
+import symbols "symbols.salam"
+
+pub const RETIRED_MARK := "⌛️ این پنل"
+
+pub func EscapeHtml(text: str): str:
+    mut s := str.Replace(text, "&", "&amp;")
+    s = str.Replace(s, "<", "&lt;")
+    s = str.Replace(s, ">", "&gt;")
+    s = str.Replace(s, "\"", "&quot;")
+    ret s
+end
+
+pub func Direction(direction: str): str:
+    if direction == types.CALL: ret "🟢 خرید" end
+    ret "🔴 فروش"
+end
+
+pub func DirectionLong(direction: str): str:
+    if direction == types.CALL: ret "🟢 خرید (Buy / Call)" end
+    ret "🔴 فروش (Sell / Put)"
+end
+
+pub func TriggerLabel(mode: str): str:
+    if mode == types.TRIGGER_TOUCH: ret "همان لحظهٔ برخورد" end
+    ret "اولین لحظهٔ کندل بعدی"
+end
+
+pub func TriggerHelp(mode: str): str:
+    if mode == types.TRIGGER_TOUCH: ret "همان ثانیه‌ای که قیمت به عدد هدف برسد، معامله باز می‌شود." end
+    ret "بعد از برخورد قیمت صبر می‌کند و معامله را دقیقاً در اولین لحظهٔ کندل بعدی باز می‌کند."
+end
+
+pub func ExpiryLabel(mode: str): str:
+    if mode == types.EXPIRY_FIXED: ret "زمان ثابت" end
+    ret "شناور (تا پایان کندل)"
+end
+
+pub func ExpiryHelp(mode: str): str:
+    if mode == types.EXPIRY_FIXED: ret "معامله به اندازهٔ مدتی که خودتان می‌دهید باز می‌ماند (مثلاً ۶۰ ثانیه)." end
+    ret "معامله تا پایان کندل جاری باز می‌ماند؛ اگر تعداد کندل بیشتر بدهید، تا پایان همان تعداد کندل."
+end
+
+pub func ChartLabel(chart: str): str:
+    if chart == types.CHART_CANDLE: ret "کندلی" end
+    if chart == types.CHART_HEIKIN_ASHI: ret "هایکن‌آشی" end
+    ret "خطی"
+end
+
+pub func ChartHelp(chart: str): str:
+    if chart == types.CHART_CANDLE:
+        ret "کندل استاندارد (ژاپنی): هر کندل دقیقاً قیمت باز، بسته، بیشترین و کمترین همان بازه را نشان می‌دهد. قیمت واقعی بازار، بدون هیچ فیلتری."
+    end
+    if chart == types.CHART_HEIKIN_ASHI:
+        ret "هایکن‌آشی: کندل‌ها از میانگین قیمت‌ها ساخته می‌شوند، پس نوسان‌های ریز حذف و روند صاف‌تر دیده می‌شود؛ اما قیمت روی کندل، قیمت واقعی معامله نیست و کمی با تأخیر می‌آید."
+    end
+    ret "خطی: فقط قیمت بستهٔ هر بازه به هم وصل می‌شود؛ ساده‌ترین نما برای دیدن مسیر کلی قیمت."
+end
+
+pub func AccountLabel(mode: str): str:
+    if mode == types.MODE_DEMO: ret "🧪 دمو" end
+    ret "💰 ریل"
+end
+
+pub func StatusLabel(status: str): str:
+    if status == types.ST_PENDING: ret "⏳ در انتظار قیمت" end
+    if status == types.ST_ARMED: ret "🎯 مسلح (منتظر کندل بعدی)" end
+    if status == types.ST_PLACING: ret "📤 در حال ارسال" end
+    if status == types.ST_OPEN: ret "🔵 باز" end
+    if status == types.ST_WON: ret "✅ برد" end
+    if status == types.ST_LOST: ret "🛑 باخت" end
+    if status == types.ST_DRAW: ret "🟰 مساوی" end
+    if status == types.ST_CANCELLED: ret "⚪️ لغو شده" end
+    if status == types.ST_FAILED: ret "⚠️ ناموفق" end
+    ret "⌛️ منقضی شده"
+end
+
+// How long the trade stays open, in the words its expiry mode calls for.
+pub func ExpiryDescription(o: types.Order): str:
+    if o.expiry_mode == types.EXPIRY_FIXED:
+        ret timex.FormatDuration(o.duration_seconds) + " (ثابت)"
+    end
+    mut count := "پایان کندل جاری"
+    if o.candle_count > 1: count = str.FromInt(o.candle_count) + " کندل" end
+    ret count + " × " + timex.TimeframeLabel(o.timeframe_seconds) + " (شناور)"
+end
+
+pub func Headline(o: types.Order): str:
+    ret "<b>#" + EscapeHtml(o.id) + "</b> · " + EscapeHtml(o.symbol) + " · " + Direction(o.direction)
+end
+
+// One broker asset as a line: symbol, whether its market is open, payout.
+pub func AssetLine(a: symbols.Asset): str:
+    mut line := "<code>" + EscapeHtml(a.symbol) + "</code> · "
+    if a.is_open: line = line + "🟢 باز" else: line = line + "🔴 بسته" end
+    if a.has_payout: line = line + " · پرداخت " + str.FromInt(a.payout) + "٪" end
+    if a.name.len() > 0: line = line + " · " + EscapeHtml(a.name) end
+    ret line
+end
+
+// The full order card, as /list and every notification show it.
+pub func RenderOrder(o: types.Order, offset_minutes: i64, compact: bool): str:
+    mut out := Headline(o) + "\n"
+    out = out + "وضعیت: " + StatusLabel(o.status) + "\n"
+    out = out + "قیمت ورود هدف: <code>" + timex.FormatPrice(o.trigger_price) + "</code>\n"
+    out = out + "نحوهٔ ورود: " + TriggerLabel(o.trigger_mode) + "\n"
+    out = out + "مدت معامله: " + ExpiryDescription(o) + "\n"
+    out = out + "چارت: " + timex.TimeframeLabel(o.timeframe_seconds) + " · " + ChartLabel(o.chart_type) + "\n"
+    out = out + "مبلغ: " + timex.FormatMoney(o.amount) + " · حساب: " + AccountLabel(o.account_mode)
+
+    if !compact:
+        if o.has_reference:
+            out = out + "\nقیمت هنگام ثبت: <code>" + timex.FormatPrice(o.reference_price) + "</code>"
+        end
+        if o.valid_until > 0.0:
+            out = out + "\nاعتبار سفارش تا: " + timex.FormatTime(o.valid_until, offset_minutes)
+        end
+    end
+
+    if o.triggered_at > 0.0:
+        out = out + "\nبرخورد قیمت: <code>" + timex.FormatPrice(o.triggered_price) + "</code> در " + timex.FormatTime(o.triggered_at, offset_minutes)
+    end
+    if o.opened_at > 0.0:
+        out = out + "\nباز شد در: " + timex.FormatTime(o.opened_at, offset_minutes) + " · قیمت <code>" + timex.FormatPrice(o.open_price) + "</code>"
+    end
+    if o.closes_at > 0.0 && o.closed_at == 0.0:
+        out = out + "\nزمان بسته شدن: " + timex.FormatTime(o.closes_at, offset_minutes)
+    end
+    if o.closed_at > 0.0:
+        out = out + "\nبسته شد در: " + timex.FormatTime(o.closed_at, offset_minutes) + " · قیمت <code>" + timex.FormatPrice(o.close_price) + "</code>"
+        out = out + "\nسود/زیان: <b>" + timex.FormatMoney(o.profit) + "</b>"
+    end
+    if o.note.len() > 0:
+        out = out + "\nیادداشت: " + EscapeHtml(o.note)
+    end
+    ret out
+end
+
+pub func WithBalance(text: str, balance: f64, show: bool): str:
+    if !show: ret text end
+    ret text + "\n\n💵 موجودی حساب: <b>" + timex.FormatMoney(balance) + "</b>"
+end
+
+// Everywhere the user may type a duration accepts the same spellings; this
+// is the reminder shown wherever one is asked for.
+pub func TimeFormatHint(): str:
+    ret "واحد را هرطور راحتید بنویسید: <code>s</code>/<code>sec</code>/<code>second</code>/<code>ثانیه</code> · " +
+        "<code>m</code>/<code>min</code>/<code>minute</code>/<code>دقیقه</code> · <code>h</code>/<code>hour</code>/<code>ساعت</code> · " +
+        "<code>d</code>/<code>day</code>/<code>روز</code> · <code>w</code>/<code>week</code>/<code>هفته</code> · " +
+        "<code>mo</code>/<code>month</code>/<code>ماه</code>\n" +
+        "حرف بزرگ و کوچک، فاصله بین عدد و واحد، و رقم فارسی هم اشکالی ندارد. عدد تنها یعنی ثانیه."
+end
+
+pub func Guide(): str:
+    ret "🤖 <b>ربات معاملات پاکت آپشن</b>\n\n" +
+        "این ربات برای شما «سفارش شرطی» می‌سازد. شما می‌گویید روی کدام نماد، در چه قیمتی، در چه جهتی و با چه مبلغی؛ ربات قیمت لحظه‌ای همان نماد را زنده دنبال می‌کند و همان لحظه‌ای که قیمت به عدد شما رسید معامله را باز می‌کند، تا پایان مدت نگه می‌دارد و نتیجه را خبر می‌دهد.\n\n" +
+        "<b>🚀 شروع در سه قدم</b>\n" +
+        "۱) نشست حساب را ثبت کنید: /session\n" +
+        "۲) /new را بزنید تا پنل ساخت سفارش باز شود.\n" +
+        "۳) نماد و قیمت را بدهید و «✅ ثبت سفارش» را بزنید.\n\n" +
+        "<b>⌨️ مهم‌ترین نکتهٔ پنل /new</b>\n" +
+        "دکمه‌هایی که کنارشان ✍️ هست (نماد، قیمت، مبلغ، مدت، تعداد کندل، اعتبار) مقدارشان را <b>از شما می‌پرسند</b>: روی دکمه بزنید، ربات یک پیام می‌فرستد و کادر پاسخ باز می‌شود، بعد مقدار را تایپ کنید و بفرستید.\n" +
+        "بقیهٔ دکمه‌ها با هر بار زدن بین حالت‌ها می‌چرخند و «چارت» و «تایم‌فریم» فهرست انتخاب باز می‌کنند.\n\n" +
+        "<b>🧭 یک مثال کامل</b>\n" +
+        "اگر قیمت <code>EURUSD</code> به <code>1.08540</code> رسید، یک معاملهٔ فروش ۶۰ ثانیه‌ای با ۵ دلار روی حساب دمو باز شود و اگر تا نیم ساعت دیگر نرسید لغو شود:\n" +
+        "<code>/order EURUSD sell 1.08540 dur=60 amount=5 acc=demo valid=30m</code>\n\n" +
+        "<b>📚 راهنماهای بیشتر</b>\nدکمه‌های پایین را بزنید."
+end
+
+pub func ChartGuide(): str:
+    ret "📈 <b>نوع چارت: کندلی، هایکن‌آشی یا خطی؟</b>\n\n" +
+        "این گزینه تعیین می‌کند ربات کندل‌های نماد را چطور بسازد. قیمت ورود و خروج معامله همیشه قیمت واقعی بازار است و با این گزینه عوض نمی‌شود؛ چیزی که عوض می‌شود شکل کندل‌هاست.\n\n" +
+        "<b>۱) کندلی (Candlestick) — پیش‌فرض</b>\n" + ChartHelp(types.CHART_CANDLE) + "\n" +
+        "مثال: در تایم‌فریم ۱ دقیقه، کندل ساعت ۱۰:۰۰ با اولین قیمت آن دقیقه باز می‌شود و با آخرین قیمت ثانیهٔ ۵۹ بسته می‌شود.\n\n" +
+        "<b>۲) هایکن‌آشی (Heikin-Ashi)</b>\n" + ChartHelp(types.CHART_HEIKIN_ASHI) + "\n" +
+        "قیمت بستهٔ هر کندل میانگین چهار قیمت همان بازه است و قیمت باز، میانگین باز و بستهٔ کندل قبلی؛ یعنی هر کندل کمی از کندل قبلی هم در خودش دارد.\n\n" +
+        "<b>۳) خطی (Line)</b>\n" + ChartHelp(types.CHART_LINE) + "\n\n" +
+        "<b>خلاصه</b>\nعدد دقیق ← کندلی. دیدن روند بدون نویز ← هایکن‌آشی. نگاه ساده ← خطی.\n" +
+        "در دستور تک‌خطی: <code>chart=candle</code> · <code>chart=ha</code> · <code>chart=line</code>"
+end
+
+pub func TimeGuide(): str:
+    ret "⏱ <b>نوشتن زمان و مدت</b>\n\n" +
+        "هرجا ربات از شما مدت می‌خواهد (مدت معامله، تایم‌فریم، اعتبار سفارش) می‌توانید آزادانه بنویسید.\n\n" +
+        TimeFormatHint() + "\n\n" +
+        "<b>نمونه‌های درست</b>\n" +
+        "<code>60</code> ← ۶۰ ثانیه (عدد تنها یعنی ثانیه)\n" +
+        "<code>90s</code> · <code>90 sec</code> · <code>۹۰ ثانیه</code>\n" +
+        "<code>1m</code> · <code>1M</code> · <code>2 minutes</code> · <code>۲ دقیقه</code>\n" +
+        "<code>1h 30m</code> · <code>۱ ساعت و ۳۰ دقیقه</code>\n" +
+        "<code>3 days</code> · <code>1 هفته</code> · <code>1 ماه</code>\n\n" +
+        "در «اعتبار سفارش»، عدد <code>0</code> یعنی سفارش هیچ‌وقت منقضی نشود."
+end
+
+pub func TradeGuide(): str:
+    ret "🎯 <b>ورود، انقضا و اعتبار</b>\n\n" +
+        "<b>نحوهٔ ورود</b> — بعد از رسیدن قیمت به هدف، معامله دقیقاً کِی باز شود.\n" +
+        "• لحظه‌ای: " + TriggerHelp(types.TRIGGER_TOUCH) + "\n" +
+        "• کندل بعدی: " + TriggerHelp(types.TRIGGER_NEXT_CANDLE) + "\n\n" +
+        "<b>نوع انقضا</b> — معامله کِی بسته شود.\n" +
+        "• ثابت: " + ExpiryHelp(types.EXPIRY_FIXED) + "\n" +
+        "• شناور: " + ExpiryHelp(types.EXPIRY_FLOATING) + "\n" +
+        "مثال: تایم‌فریم ۱ دقیقه، انقضای شناور، ۱ کندل ← اگر در ثانیهٔ ۲۳ وارد شوید، معامله در پایان همان دقیقه بسته می‌شود.\n\n" +
+        "<b>اعتبار سفارش</b> — تا چه مدت منتظر رسیدن قیمت به هدف بمانیم. <code>0</code> یعنی بدون محدودیت.\n\n" +
+        "<b>حساب</b> — دمو با پول مجازی، ریل با پول واقعی. حساب پیش‌فرض را با /mode عوض کنید."
+end
+
+pub func Help(): str:
+    ret "🤖 <b>ربات معاملات پاکت آپشن</b>\n\n" +
+        "<b>دستورها</b>\n" +
+        "/new: ساخت سفارش با دکمه‌ها\n" +
+        "/order: ساخت سریع سفارش در یک خط\n" +
+        "/list: سفارش‌های فعال\n" +
+        "/cancel &lt;کد&gt;: لغو سفارش\n" +
+        "/history: آخرین سفارش‌ها\n" +
+        "/stats: آمار ۲۴ ساعت گذشته\n" +
+        "/balance: موجودی حساب\n" +
+        "/price &lt;نماد&gt;: قیمت لحظه‌ای\n" +
+        "/symbols &lt;جست‌وجو&gt;: فهرست نمادهای کارگزار\n" +
+        "/status: وضعیت اتصال‌ها\n" +
+        "/mode demo|real: تغییر حساب پیش‌فرض\n" +
+        "/settings و /set &lt;کلید&gt; &lt;مقدار&gt;: تنظیمات\n" +
+        "/session demo|real &lt;SSID&gt;: ثبت نشست پاکت آپشن\n" +
+        "/id: نمایش شناسهٔ چت\n\n" +
+        "<b>نمونهٔ دستور تک‌خطی</b>\n" +
+        "<code>/order GBPAUD_otc buy 1.95320 tf=1m dur=60 amount=1 acc=demo</code>\n" +
+        "<code>/order EURUSD sell 1.08540 tf=1m exp=float candles=1 entry=next</code>\n\n" +
+        "<b>پارامترها</b>\n" +
+        "<code>tf</code> تایم‌فریم · <code>chart</code> نوع چارت (candle/ha/line)\n" +
+        "<code>entry</code> ورود: <code>touch</code> یا <code>next</code>\n" +
+        "<code>exp</code> انقضا: <code>fixed</code> یا <code>float</code>\n" +
+        "<code>dur</code> مدت ثابت · <code>candles</code> تعداد کندل\n" +
+        "<code>amount</code> مبلغ · <code>acc</code> حساب · <code>valid</code> اعتبار سفارش\n\n" +
+        "مقدارهای زمانی را آزادانه بنویسید: <code>dur=90</code> · <code>dur=1m</code> · <code>valid=2h</code>\n" +
+        "برای راهنمای کامل /start را بزنید."
+end
+
+pub func SessionHelp(): str:
+    ret "🔑 <b>گرفتن SSID از پاکت آپشن</b>\n\n" +
+        "۱) در مرورگر وارد حساب خود شوید و صفحهٔ معاملات همان حساب را باز کنید:\n" +
+        "دمو: <code>https://p.finance/fa/cabinet/demo-quick-high-low/</code>\n" +
+        "ریل: <code>https://p.finance/fa/cabinet/quick-high-low/</code>\n" +
+        "۲) با F12 ابزار توسعه‌دهنده را باز کنید، تب <b>Network</b>، فیلتر <b>WS</b>، و صفحه را رفرش کنید.\n" +
+        "۳) روی اتصالی کلیک کنید که آدرسش شبیه <code>demo-api-eu.po.market/socket.io/</code> است.\n" +
+        "۴) در تب <b>Messages</b> دنبال فریم ارسالی بگردید که با <code>42[\"auth\",</code> شروع می‌شود.\n" +
+        "۵) کل همان فریم را بفرستید:\n" +
+        "<code>/session demo 42[\"auth\",{…}]</code>\n\n" +
+        "هر دو قالب پذیرفته می‌شود: <code>sessionToken</code> (قالب فعلی) و <code>session</code> (قالب قدیمی‌تر).\n\n" +
+        "⏳ این توکن ماندگار نیست؛ آن را از تبی بردارید که همان لحظه باز و لاگین است."
+end

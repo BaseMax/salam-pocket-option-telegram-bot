@@ -1,0 +1,187 @@
+// Symbol names the way the broker spells them, out of whatever the user
+// typed: EUR/USD, eurusd otc, ‌EURUSD_OTC all land on the same asset.
+package symbols
+
+import str
+
+const OTC_SUFFIX := "_otc"
+pub const MAX_SUGGESTIONS := 5
+
+// One tradable asset as the broker lists it.
+@en "Asset"
+@fa "دارایی"
+pub struct Asset:
+    pub symbol: str = ""
+    pub name: str = ""
+    pub payout: i64 = 0
+    pub has_payout: bool = false
+    pub is_open: bool = true
+end
+
+func IsSeparator(c: str): bool:
+    ret c == " " || c == "." || c == "_" || c == "/" || c == "\\" || c == "|" || c == "," || c == "+" || c == "-"
+end
+
+// Everything the user's keyboard may have added: Persian digits, direction
+// marks, separators, mixed case.
+func Clean(raw: str): str:
+    mut s := str.ToEnglishDigits(raw)
+    s = str.Replace(s, "‌", "")
+    s = str.Replace(s, "‍", "")
+    s = str.Replace(s, "‎", "")
+    s = str.Replace(s, "‏", "")
+    s = str.Upper(str.Trim(s))
+
+    mut out := ""
+    mut i := 0
+    while i < s.len():
+        c := s.substr(i, 1)
+        if IsSeparator(c):
+            if out.len() > 0 && out.substr(out.len() - 1, 1) != " ": out = out + " " end
+        else:
+            out = out + c
+        end
+        i = i + 1
+    end
+    ret str.Trim(out)
+end
+
+pub func IsOtc(symbol: str): bool:
+    up := str.Upper(symbol)
+    if up.len() < 4: ret false end
+    ret up.substr(up.len() - 4, 4) == "_OTC"
+end
+
+// The same market's other listing: the OTC one during the weekend, the
+// regular one in the week.
+pub func Twin(symbol: str): str:
+    if IsOtc(symbol): ret symbol.substr(0, symbol.len() - 4) end
+    ret symbol + OTC_SUFFIX
+end
+
+// The broker's spelling: a bare pair in upper case, OTC as a "_otc" suffix.
+pub func Normalize(raw: str): str:
+    cleaned := Clean(raw)
+    if cleaned.len() == 0: ret "" end
+
+    mut parts := cleaned.split(" ")
+    defer parts.free()
+
+    mut otc := false
+    mut base := ""
+    mut i := 0
+    while i < parts.len():
+        piece := parts.get(i)
+        if piece == "OTC" && parts.len() > 1:
+            otc = true
+        else:
+            base = base + piece
+        end
+        i = i + 1
+    end
+
+    if !otc && base.len() > 3 && base.substr(base.len() - 3, 3) == "OTC":
+        otc = true
+        base = base.substr(0, base.len() - 3)
+    end
+    if base.len() == 0: ret "" end
+    if otc: ret base + OTC_SUFFIX end
+    ret base
+end
+
+// The bare market behind a name, for search: no OTC suffix, no # prefix.
+pub func Bare(symbol: str): str:
+    mut s := str.Upper(symbol)
+    if s.len() > 4 && s.substr(s.len() - 4, 4) == "_OTC": s = s.substr(0, s.len() - 4) end
+    if s.len() > 1 && s.substr(0, 1) == "#": s = s.substr(1, s.len() - 1) end
+    ret s
+end
+
+// Open markets first, then the fattest payout: the order a trader reads in.
+pub func Ranks(a: Asset, b: Asset): bool:
+    if a.is_open != b.is_open: ret a.is_open end
+    ret a.payout > b.payout
+end
+
+// The asset with this exact symbol, or an empty Asset.
+pub func Find(assets: Vector<Asset>, symbol: str): Asset:
+    want := str.Upper(symbol)
+    mut i := 0
+    while i < assets.len():
+        a := assets.get(i)
+        if str.Upper(a.symbol) == want: ret a end
+        i = i + 1
+    end
+    ret Asset {}
+end
+
+// What the user typed, matched against the broker's list. `status` is
+// "exact", "corrected" (a near miss we can fix) or "unknown".
+pub func Resolve(raw: str, assets: Vector<Asset>, status &: str, matched &: Asset, twin &: Asset): str:
+    name := Normalize(raw)
+    status = "unknown"
+    matched = Asset {}
+    twin = Asset {}
+    if name.len() == 0: ret name end
+
+    exact := Find(assets, name)
+    if exact.symbol.len() > 0:
+        status = "exact"
+        matched = exact
+        twin = Find(assets, Twin(exact.symbol))
+        ret name
+    end
+
+    mut candidates := Vector {} as Vector<str>
+    defer candidates.free()
+    candidates.push("#" + name)
+    candidates.push(Twin(name))
+    candidates.push("#" + Twin(name))
+
+    mut i := 0
+    while i < candidates.len():
+        hit := Find(assets, candidates.get(i))
+        if hit.symbol.len() > 0:
+            status = "corrected"
+            matched = hit
+            twin = Find(assets, Twin(hit.symbol))
+            ret name
+        end
+        i = i + 1
+    end
+    ret name
+end
+
+// Assets worth offering when nothing matched, best first.
+pub func Suggest(name: str, assets: Vector<Asset>): Vector<Asset>:
+    base := Bare(name)
+    mut out := Vector {} as Vector<Asset>
+    if base.len() < 2: ret out end
+
+    mut i := 0
+    while i < assets.len():
+        a := assets.get(i)
+        symbol := Bare(a.symbol)
+        upper_name := str.Upper(a.name)
+        if str.Contains(symbol, base) || str.Contains(base, symbol) || str.Contains(upper_name, base):
+            out.push(a)
+        end
+        i = i + 1
+    end
+
+    // insertion sort: the list is short and this keeps the order stable
+    mut j := 1
+    while j < out.len():
+        current := out.get(j)
+        mut k := j - 1
+        while k >= 0 && Ranks(current, out.get(k)):
+            out.set(k + 1, out.get(k))
+            k = k - 1
+        end
+        out.set(k + 1, current)
+        j = j + 1
+    end
+
+    while out.len() > MAX_SUGGESTIONS: out.remove_at(out.len() - 1) end
+    ret out
+end

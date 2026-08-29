@@ -1,0 +1,122 @@
+// Reading the auth frame a user copied out of their browser.
+//
+// Two dialects are in the wild and both are accepted: the current p.finance
+// one keyed by "sessionToken", and the older one keyed by "session". What
+// comes back is the exact JSON to emit as the socket's "auth" event.
+package ssid
+
+import str
+import encoding.json
+import types "types.salam"
+
+@en "Auth"
+@fa "احراز هویت"
+pub struct Auth:
+    pub ok: bool = false
+    pub error: str = ""
+    // The JSON object emitted as the "auth" event.
+    pub frame: str = ""
+    // Emitted as "user_init" first when the modern dialect needs it.
+    pub init_frame: str = ""
+    pub has_init: bool = false
+    pub session: str = ""
+    pub uid: i64 = 0
+    pub is_demo: i64 = 1
+end
+
+func CabinetUrl(mode: str): str:
+    if mode == types.MODE_DEMO: ret "cabinet/demo-quick-high-low" end
+    ret "cabinet/quick-high-low"
+end
+
+// The object inside a pasted `42["auth",{…}]` frame, or the text itself when
+// it is already an object.
+func ExtractObject(raw: str): str:
+    text := str.Trim(raw)
+    open := str.IndexOf(text, "{")
+    if open < 0: ret "" end
+    close := str.LastIndex(text, "}")
+    if close <= open: ret "" end
+    ret text.substr(open, close - open + 1)
+end
+
+func NumberField(obj: str, key: str): i64:
+    v := str.Trim(json.Get(obj, key))
+    if v.len() == 0: ret 0 as i64 end
+    ret str.ToInt(v) as i64
+end
+
+func BuildLegacy(session: str, uid: i64, mode: str): Auth:
+    mut a := Auth {}
+    mut demo := 0 as i64
+    if mode == types.MODE_DEMO: demo = 1 as i64 end
+
+    a.frame = `{"session":"` + json.Escape(session) + `","isDemo":` + str.FromInt(demo) +
+        `,"uid":` + str.FromInt(uid) + `,"platform":1}`
+    a.session = session
+    a.uid = uid
+    a.is_demo = demo
+    a.ok = true
+    ret a
+end
+
+func BuildModern(token: str, uid: i64, mode: str): Auth:
+    mut a := Auth {}
+    mut demo := 0 as i64
+    if mode == types.MODE_DEMO: demo = 1 as i64 end
+
+    a.frame = `{"lang":"en","isChart":1,"sessionToken":"` + json.Escape(token) +
+        `","currentUrl":"` + CabinetUrl(mode) + `","uid":"` + str.FromInt(uid) + `"}`
+    a.init_frame = `{"id":` + str.FromInt(uid) + `,"secret":"` + json.Escape(token) + `"}`
+    a.has_init = true
+    a.session = token
+    a.uid = uid
+    a.is_demo = demo
+    a.ok = true
+    ret a
+end
+
+/*
+ * Reads whatever the user pasted.
+ *
+ * `uid_fallback` is used when the frame carries no uid of its own, which is
+ * why PO_DEMO_UID / PO_REAL_UID exist: a bare session id cannot be used
+ * without one.
+ */
+pub func Parse(raw: str, mode: str, uid_fallback: i64): Auth:
+    text := str.Trim(raw)
+    if text.len() == 0:
+        ret Auth { ok = false, error = "SSID خالی است." }
+    end
+
+    obj := ExtractObject(text)
+    if obj.len() == 0:
+        // A bare session id, which only works if the uid is configured.
+        if uid_fallback == 0:
+            ret Auth { ok = false, error = "برای یک session خام، uid هم لازم است: PO_DEMO_UID یا PO_REAL_UID را تنظیم کنید." }
+        end
+        ret BuildLegacy(text, uid_fallback, mode)
+    end
+
+    mut uid := NumberField(obj, "uid")
+    if uid == 0: uid = NumberField(obj, "id") end
+    if uid == 0: uid = uid_fallback end
+    if uid == 0:
+        ret Auth { ok = false, error = "این فریم uid ندارد؛ PO_DEMO_UID یا PO_REAL_UID را تنظیم کنید." }
+    end
+
+    session := str.Trim(json.Get(obj, "session"))
+    if session.len() > 0: ret BuildLegacy(session, uid, mode) end
+
+    mut token := str.Trim(json.Get(obj, "sessionToken"))
+    if token.len() == 0: token = str.Trim(json.Get(obj, "secret")) end
+    if token.len() > 0: ret BuildModern(token, uid, mode) end
+
+    ret Auth { ok = false, error = "این فریم نه session دارد نه sessionToken." }
+end
+
+// The token, shortened, for a log line that must never carry the whole one.
+pub func Redact(a: Auth): str:
+    if a.session.len() <= 8: ret "…" end
+    ret a.session.substr(0, 4) + "…" + a.session.substr(a.session.len() - 4, 4)
+end

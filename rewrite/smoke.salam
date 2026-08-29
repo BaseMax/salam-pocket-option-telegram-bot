@@ -1,0 +1,86 @@
+// A live check against the demo account: connect, authenticate, and report
+// what the broker says. It never places an order.
+package main
+
+import os
+import str
+import time
+import config "config.salam"
+import broker "broker.salam"
+import ssid "ssid.salam"
+import types "types.salam"
+import timex "timex.salam"
+import symbols "symbols.salam"
+
+func main:
+    c := config.Load()
+    raw := c.demo_ssid
+    if raw.len() == 0:
+        println "set PO_DEMO_SSID to run this"
+        ret
+    end
+
+    auth := ssid.Parse(raw, types.MODE_DEMO, c.demo_uid)
+    if !auth.ok:
+        println "SSID unreadable: " + auth.error
+        ret
+    end
+    println "auth frame built for uid " + str.FromInt(auth.uid) + " (session " + ssid.Redact(auth) + ")"
+
+    broker.SetVerbose(true)
+    broker.SetDefaultOffset(c.server_time_offset)
+    broker.SetCredentials(types.MODE_DEMO, auth)
+
+    symbol := os.Env("SMOKE_SYMBOL")
+    mut want := "EURUSD_otc"
+    if symbol.len() > 0: want = symbols.Normalize(symbol) end
+
+    idx := broker.Acquire(types.MODE_DEMO, want, 60 as i64)
+    deadline := time.NowMillis() + 25000 as i64
+    mut ticks := 0
+    mut announced := false
+
+    while time.NowMillis() < deadline:
+        broker.Pump(200, c.max_tick_gap)
+        s := broker.Get(idx)
+
+        if s.ready && !announced:
+            announced = true
+            println "authenticated; server clock offset " + str.FromInt(s.time_offset) + "s"
+        end
+        if s.has_price && ticks < 3:
+            ticks = ticks + 1
+            println "tick " + str.FromInt(ticks as i64) + ": " + want + " = " + timex.FormatPrice(s.price) +
+                " at " + timex.FormatTime(s.last_tick_time - (s.time_offset as f64), c.timezone_offset)
+        end
+        if s.has_balance && broker.AssetCount(types.MODE_DEMO) > 0 && ticks >= 3: break end
+    end
+
+    final := broker.Get(idx)
+    println "---"
+    println "ready:        " + (final.ready ? "yes" : "no")
+    println "auth failed:  " + (final.auth_failed ? final.auth_error : "no")
+    if final.has_balance:
+        println "balance:      " + timex.FormatMoney(final.balance)
+    else:
+        println "balance:      not reported"
+    end
+    println "assets:       " + str.FromInt(broker.AssetCount(types.MODE_DEMO) as i64) + " symbols"
+    if final.has_price:
+        println "price:        " + timex.FormatPrice(final.price)
+    else:
+        println "price:        no tick for " + want
+    end
+
+    mut list := broker.Assets(types.MODE_DEMO)
+    mut open_count := 0
+    mut i := 0
+    while i < list.len():
+        if list.get(i).is_open: open_count = open_count + 1 end
+        i = i + 1
+    end
+    println "open markets: " + str.FromInt(open_count as i64)
+
+    broker.Release(idx)
+    broker.CloseAll()
+end

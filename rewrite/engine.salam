@@ -1,0 +1,563 @@
+/*
+ * The order state machine.
+ *
+ * pending ─price touches trigger─┬─ touch ───────────────► placing ─► open ─► won/lost/draw
+ *                                └─ next_candle ─► armed ─► (candle opens) ─► placing ─► …
+ *
+ * Nothing here talks to Telegram: what happens is pushed onto an event
+ * queue that the bot layer drains, which keeps the trading rules readable
+ * and lets both sides be tested on their own.
+ */
+package engine
+
+import str
+import time
+import types "types.salam"
+import store "store.salam"
+import broker "broker.salam"
+import timex "timex.salam"
+import config "config.salam"
+import symbols "symbols.salam"
+
+// What the engine reports. The order travels with the event so the bot can
+// render it without going back to the database.
+pub const EV_ARMED := "armed"
+pub const EV_TRIGGERED := "triggered"
+pub const EV_OPENED := "opened"
+pub const EV_SETTLED := "settled"
+pub const EV_FAILED := "failed"
+pub const EV_EXPIRED := "expired"
+pub const EV_MISSED := "missed"
+pub const EV_SETTLE_LATE := "settlement_pending"
+pub const EV_AUTH_FAILED := "auth_failed"
+
+mut _attachments := Vector {} as Vector<Attachment>
+mut _events := Vector {} as Vector<Event>
+mut _config := config.Config {}
+mut _started := false
+
+// One order the engine is following, and the socket it listens on.
+struct Attachment:
+    pub order_id: str = ""
+    pub session: int = 0
+    pub settlement_warned: bool = false
+end
+
+@en "Event"
+@fa "رویداد"
+pub struct Event:
+    pub kind: str = ""
+    pub order: types.Order = types.Order {}
+    pub price: f64 = 0.0
+    pub entry_at: f64 = 0.0
+    pub detail: str = ""
+    pub mode: str = ""
+end
+
+func Publish(kind: str, order: types.Order, price: f64, entry_at: f64, detail: str):
+    mut e := Event {}
+    e.kind = kind
+    e.order = order
+    e.price = price
+    e.entry_at = entry_at
+    e.detail = detail
+    e.mode = order.account_mode
+    _events.push(e)
+end
+
+
+func FindAttachment(order_id: str): int:
+    mut i := 0
+    while i < _attachments.len():
+        if _attachments.get(i).order_id == order_id: ret i end
+        i = i + 1
+    end
+    ret 0 - 1
+end
+
+
+func Detach(order_id: str):
+    idx := FindAttachment(order_id)
+    if idx < 0: ret end
+    a := _attachments.get(idx)
+    broker.Release(a.session)
+    _attachments.remove_at(idx)
+end
+
+
+func Attach(o: types.Order):
+    if FindAttachment(o.id) >= 0: ret end
+    session := broker.Acquire(o.account_mode, o.symbol, o.timeframe_seconds)
+    mut a := Attachment {}
+    a.order_id = o.id
+    a.session = session
+    _attachments.push(a)
+end
+
+
+// Ends an order's life: record the outcome, let the session go, say so.
+func Finish(o: types.Order, status: str, note: str, kind: str, price: f64, detail: str):
+    mut done := o
+    done.status = status
+    if note.len() > 0: done.note = note end
+    store.Save(done)
+    Detach(done.id)
+    Publish(kind, done, price, 0.0, detail)
+end
+
+
+// Sends the trade and records what came back.
+func Place(o: types.Order, entry_time: f64):
+    idx := FindAttachment(o.id)
+    if idx < 0:
+        Finish(o, types.ST_FAILED, "no live session for this order", EV_FAILED, 0.0, "no live session for this order")
+        ret
+    end
+    a := _attachments.get(idx)
+    session := broker.Get(a.session)
+
+    mut close_at := 0.0
+    mut rolled := 0 as i64
+    duration := ResolveExpiry(o, entry_time, _config.min_duration, close_at, rolled)
+
+    mut broker_close := entry_time + (duration as f64)
+    if close_at > 0.0: broker_close = close_at end
+
+    ack := broker.PlaceOrder(a.session, o.amount, o.direction, duration, close_at,
+        _config.order_ack_timeout * 1000, _config.max_tick_gap)
+
+    mut retried := ack
+    if !ack.ok && close_at > 0.0:
+        // Some servers refuse an absolute close; the same trade as a
+        // duration is the fallback the TypeScript client also used.
+        mut seconds := (broker_close - entry_time + 0.5) as i64
+        if seconds < _config.min_duration: seconds = _config.min_duration end
+        retried = broker.PlaceOrder(a.session, o.amount, o.direction, seconds, 0.0,
+            _config.order_ack_timeout * 1000, _config.max_tick_gap)
+    end
+
+    if !retried.ok:
+        Finish(o, types.ST_FAILED, retried.error, EV_FAILED, 0.0, retried.error)
+        ret
+    end
+
+    mut open := o
+    open.status = types.ST_OPEN
+    open.deal_id = retried.deal_id
+    open.open_price = retried.open_price
+    open.opened_at = timex.NowSeconds()
+    open.closes_at = broker_close - (session.time_offset as f64)
+    store.Save(open)
+    Publish(EV_OPENED, open, retried.open_price, 0.0, "")
+end
+
+
+// The price arrived. Enter now, or arm the order for the next candle.
+func Triggered(o: types.Order, price: f64, tick_time: f64, offset: i64):
+    if o.trigger_mode == types.TRIGGER_NEXT_CANDLE:
+        mut armed := o
+        armed.status = types.ST_ARMED
+        armed.triggered_price = price
+        armed.triggered_at = tick_time - (offset as f64)
+        store.Save(armed)
+        entry_at := timex.CandleOpenTime(tick_time, o.timeframe_seconds) + (o.timeframe_seconds as f64) - (offset as f64)
+        Publish(EV_ARMED, armed, price, entry_at, "")
+        ret
+    end
+
+    mut placing := o
+    placing.status = types.ST_PLACING
+    placing.triggered_price = price
+    placing.triggered_at = tick_time - (offset as f64)
+    store.Save(placing)
+    Publish(EV_TRIGGERED, placing, price, 0.0, "")
+    Place(placing, tick_time)
+end
+
+
+// An armed order enters at the top of the next candle - unless the stream
+// was down when that candle opened, or the candle has already gone by.
+func MaybeEnterOnNewCandle(o: types.Order, tick_time: f64, price: f64, offset: i64, follows_gap: bool):
+    if o.triggered_at == 0.0: ret end
+    armed_candle := timex.CandleOpenTime(o.triggered_at + (offset as f64), o.timeframe_seconds)
+    current_candle := timex.CandleOpenTime(tick_time, o.timeframe_seconds)
+    if current_candle <= armed_candle: ret end
+
+    if current_candle > armed_candle + (o.timeframe_seconds as f64):
+        late := ((current_candle - armed_candle) / (o.timeframe_seconds as f64)) as i64 - 1 as i64
+        Finish(o, types.ST_EXPIRED, "the entry candle passed " + str.FromInt(late) + " candle(s) ago",
+            EV_MISSED, price, "کندل ورود گذشت")
+        ret
+    end
+    if follows_gap:
+        Finish(o, types.ST_EXPIRED, "the entry candle opened while the price stream was down",
+            EV_MISSED, price, "جریان قیمت هنگام باز شدن کندل قطع بود")
+        ret
+    end
+
+    mut placing := o
+    placing.status = types.ST_PLACING
+    store.Save(placing)
+    Publish(EV_TRIGGERED, placing, price, 0.0, "")
+    Place(placing, tick_time)
+end
+
+
+func StepOrder(index: int):
+    a := _attachments.get(index)
+    o := store.Get(a.order_id)
+    if o.id.len() == 0:
+        Detach(a.order_id)
+        ret
+    end
+
+    session := broker.Get(a.session)
+    if !session.has_price: ret end
+    price := session.price
+    tick_time := session.last_tick_time
+
+    if o.status == types.ST_PENDING:
+        if !o.has_reference:
+            mut seeded := o
+            seeded.reference_price = price
+            seeded.has_reference = true
+            seeded.approach_side = ResolveApproachSide(o.trigger_price, price, true)
+            store.Save(seeded)
+            ret
+        end
+        if IsTouched(o, session.prior_price, session.has_price, price):
+            if session.tick_follows_gap:
+                Finish(o, types.ST_EXPIRED, "the price crossed the trigger while the price stream was down",
+                    EV_MISSED, price, "قیمت هنگام قطعی جریان از هدف عبور کرد")
+                ret
+            end
+            Triggered(o, price, tick_time, session.time_offset)
+        end
+        ret
+    end
+
+    if o.status == types.ST_ARMED:
+        MaybeEnterOnNewCandle(o, tick_time, price, session.time_offset, session.tick_follows_gap)
+    end
+end
+
+
+// Matches a settled trade to the order that opened it.
+func ApplyDeal(d: broker.Deal):
+    o := store.FindByDealId(d.deal_id)
+    if o.id.len() == 0 || o.closed_at > 0.0: ret end
+
+    idx := FindAttachment(o.id)
+    mut offset := 0 as i64
+    if idx >= 0: offset = broker.Get(_attachments.get(idx).session).time_offset end
+
+    mut status := types.ST_DRAW
+    if d.profit > 0.0: status = types.ST_WON end
+    if d.profit < 0.0: status = types.ST_LOST end
+
+    mut done := o
+    done.status = status
+    done.profit = d.profit
+    done.has_profit = true
+    done.close_price = d.close_price
+    if d.close_time > 0.0: done.closed_at = d.close_time - (offset as f64)
+    else: done.closed_at = timex.NowSeconds()
+    end
+    store.Save(done)
+    Detach(done.id)
+    Publish(EV_SETTLED, done, 0.0, 0.0, "")
+end
+
+
+// Reports a session whose credentials the broker rejected, once.
+func CheckAuth():
+    mut i := 0
+    while i < _attachments.len():
+        s := broker.Get(_attachments.get(i).session)
+        if s.auth_failed:
+            mut e := Event {}
+            e.kind = EV_AUTH_FAILED
+            e.mode = s.mode
+            e.detail = s.auth_error
+            _events.push(e)
+            broker.ResetMode(s.mode)
+            ret
+        end
+        i = i + 1
+    end
+end
+
+// Which way the price has to travel for this order to be a crossing rather
+// than a coincidence.
+pub func ResolveApproachSide(trigger_price: f64, reference_price: f64, has_reference: bool): str:
+    if !has_reference: ret types.SIDE_ANY end
+    if reference_price < trigger_price: ret types.SIDE_BELOW end
+    if reference_price > trigger_price: ret types.SIDE_ABOVE end
+    ret types.SIDE_ANY
+end
+
+// True when the segment between two prices contains the target, whichever
+// direction it moved in.
+pub func Crossed(previous: f64, current: f64, target: f64): bool:
+    if previous <= target && current >= target: ret true end
+    if previous >= target && current <= target: ret true end
+    ret false
+end
+
+// Whether this tick counts as the touch the order was waiting for.
+pub func IsTouched(o: types.Order, prior_price: f64, has_prior: bool, price: f64): bool:
+    if o.approach_side == types.SIDE_BELOW: ret price >= o.trigger_price end
+    if o.approach_side == types.SIDE_ABOVE: ret price <= o.trigger_price end
+    if price == o.trigger_price: ret true end
+    if !has_prior: ret false end
+    ret Crossed(prior_price, price, o.trigger_price)
+end
+
+/*
+ * When the trade should close, given the moment it fills.
+ *
+ * A floating expiry lands on a candle close; one that would be shorter than
+ * the broker's minimum rolls forward a candle at a time until it is long
+ * enough. `close_at` is 0 for a fixed trade, which is sent as a duration.
+ */
+pub func ResolveExpiry(o: types.Order, entry_time: f64, min_duration: i64, close_at &: f64, rolled &: i64): i64:
+    close_at = 0.0
+    rolled = 0 as i64
+    if o.expiry_mode == types.EXPIRY_FIXED:
+        ret o.duration_seconds
+    end
+
+    target := timex.NthCandleCloseTime(entry_time, o.timeframe_seconds, o.candle_count)
+    mut close := target
+    while close - entry_time < (min_duration as f64):
+        close = close + (o.timeframe_seconds as f64)
+    end
+    close_at = close
+    rolled = ((close - target) / (o.timeframe_seconds as f64) + 0.5) as i64
+    ret 0 as i64
+end
+
+// Boots the engine: re-attach everything that was live, and refuse to guess
+// about an order that was mid-flight when the process died.
+pub func Start(c: config.Config):
+    _config = c
+    _started = true
+    broker.SetDefaultOffset(c.server_time_offset)
+
+    mut active := store.ListActive()
+    defer active.free()
+    mut i := 0
+    while i < active.len():
+        o := active.get(i)
+        if o.status == types.ST_PLACING:
+            Finish(o, types.ST_FAILED, "bot restarted while the order was being sent, verify on the broker",
+                EV_FAILED, 0.0, "ربات هنگام ارسال این سفارش راه‌اندازی مجدد شد؛ آن را نزد کارگزار بررسی کنید.")
+        else:
+            Attach(o)
+        end
+        i = i + 1
+    end
+end
+
+pub func Started(): bool:
+    ret _started
+end
+
+pub func Stop():
+    mut i := 0
+    while i < _attachments.len():
+        broker.Release(_attachments.get(i).session)
+        i = i + 1
+    end
+    _attachments.clear()
+    broker.CloseAll()
+end
+
+// The live price of a symbol, borrowing a session when none is open.
+pub func Price(mode: str, symbol: str, wait_ms: i64): f64:
+    existing := broker.Find(mode, symbol)
+    if existing >= 0:
+        s := broker.Get(existing)
+        if s.has_price: ret s.price end
+    end
+
+    idx := broker.Acquire(mode, symbol, _config.default_timeframe)
+    deadline := time.NowMillis() + wait_ms
+    mut price := 0.0
+    while time.NowMillis() < deadline:
+        broker.Pump(100, _config.max_tick_gap)
+        s := broker.Get(idx)
+        if s.has_price:
+            price = s.price
+            break
+        end
+    end
+    broker.Release(idx)
+    ret price
+end
+
+// The account balance, asking the broker if we have not been told lately.
+pub func Balance(mode: str, wait_ms: i64): f64:
+    idx := broker.Acquire(mode, "", 0 as i64)
+    broker.RefreshBalance(idx)
+    deadline := time.NowMillis() + wait_ms
+    mut balance := 0.0
+    while time.NowMillis() < deadline:
+        broker.Pump(100, _config.max_tick_gap)
+        s := broker.Get(idx)
+        if s.has_balance:
+            balance = s.balance
+            break
+        end
+    end
+    broker.Release(idx)
+    ret balance
+end
+
+// The tradable symbols of one account, waiting for the list if it has not
+// arrived yet.
+pub func Assets(mode: str, wait_ms: i64): Vector<symbols.Asset>:
+    if broker.AssetCount(mode) > 0: ret broker.Assets(mode) end
+
+    idx := broker.Acquire(mode, "", 0 as i64)
+    deadline := time.NowMillis() + wait_ms
+    while time.NowMillis() < deadline:
+        broker.Pump(100, _config.max_tick_gap)
+        if broker.AssetCount(mode) > 0: break end
+    end
+    broker.Release(idx)
+    ret broker.Assets(mode)
+end
+
+// Registers an order and starts following it.
+pub func CreateOrder(o: types.Order): types.Order:
+    mut row := o
+    if !row.has_reference:
+        price := Price(row.account_mode, row.symbol, 4000 as i64)
+        if price > 0.0:
+            row.reference_price = price
+            row.has_reference = true
+        end
+    end
+    row.approach_side = ResolveApproachSide(row.trigger_price, row.reference_price, row.has_reference)
+
+    saved := store.Create(row)
+    Attach(saved)
+    ret saved
+end
+
+// Why an order could not be called off, or "" when it was.
+pub func Cancel(order_id: str): str:
+    o := store.Get(order_id)
+    if o.id.len() == 0: ret "not_found" end
+    if o.status == types.ST_OPEN || o.status == types.ST_PLACING: ret "already_open" end
+    if !types.IsCancellable(o.status): ret "not_active" end
+
+    mut done := o
+    done.status = types.ST_CANCELLED
+    store.Save(done)
+    Detach(done.id)
+    ret ""
+end
+
+// Re-attaches an account's orders after its credentials changed.
+pub func ReloadCredentials(mode: str):
+    mut i := 0
+    while i < _attachments.len():
+        a := _attachments.get(i)
+        o := store.Get(a.order_id)
+        if o.account_mode == mode:
+            broker.Release(a.session)
+            _attachments.remove_at(i)
+        else:
+            i = i + 1
+        end
+    end
+    broker.ResetMode(mode)
+
+    mut active := store.ListActive()
+    defer active.free()
+    mut k := 0
+    while k < active.len():
+        o := active.get(k)
+        if o.account_mode == mode && o.status != types.ST_PLACING: Attach(o) end
+        k = k + 1
+    end
+end
+
+// One turn of the machine: read the sockets, move every order that can
+// move, and pick up whatever the broker settled.
+pub func Step(pump_ms: int):
+    broker.Pump(pump_ms, _config.max_tick_gap)
+
+    mut i := 0
+    while i < _attachments.len():
+        before := _attachments.len()
+        StepOrder(i)
+        if _attachments.len() == before: i = i + 1 end
+    end
+
+    while true:
+        d := broker.TakeDeal()
+        if d.deal_id.len() == 0: break end
+        ApplyDeal(d)
+    end
+
+    CheckAuth()
+end
+
+/*
+ * The once-a-second duties: orders whose validity ran out, armed orders
+ * whose candle opened in a quiet market, and trades the broker has gone
+ * quiet about.
+ */
+pub func Housekeep():
+    now := timex.NowSeconds()
+    mut i := 0
+    while i < _attachments.len():
+        a := _attachments.get(i)
+        o := store.Get(a.order_id)
+        if o.id.len() == 0:
+            Detach(a.order_id)
+            continue
+        end
+
+        if o.status == types.ST_PENDING && o.valid_until > 0.0 && now >= o.valid_until:
+            Finish(o, types.ST_EXPIRED, "the trigger price was never reached", EV_EXPIRED, 0.0, "")
+            continue
+        end
+
+        s := broker.Get(a.session)
+        if o.status == types.ST_ARMED && s.has_price:
+            MaybeEnterOnNewCandle(o, now + (s.time_offset as f64), s.price, s.time_offset, s.tick_follows_gap)
+            i = i + 1
+            continue
+        end
+
+        if o.status == types.ST_OPEN && !a.settlement_warned && o.closes_at > 0.0:
+            if now > o.closes_at + (_config.order_settle_grace as f64):
+                mut warned := a
+                warned.settlement_warned = true
+                _attachments.set(i, warned)
+                broker.RefreshBalance(a.session)
+                Publish(EV_SETTLE_LATE, o, 0.0, 0.0, "")
+            end
+        end
+        i = i + 1
+    end
+
+    broker.CloseIdle(_config.session_idle_ttl)
+end
+
+// The next thing that happened, or an event with an empty kind.
+pub func TakeEvent(): Event:
+    if _events.len() == 0: ret Event {} end
+    e := _events.get(0)
+    _events.remove_at(0)
+    ret e
+end
+
+pub func ActiveCount(): int:
+    ret _attachments.len()
+end
+

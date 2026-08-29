@@ -1,0 +1,140 @@
+// Everything the process reads from its environment, once, at startup.
+package config
+
+import os
+import str
+import timex "timex.salam"
+
+@en "Config"
+@fa "پیکربندی"
+pub struct Config:
+    pub token: str = ""
+    pub admin_ids: str = ""
+
+    pub demo_ssid: str = ""
+    pub real_ssid: str = ""
+    pub demo_uid: i64 = 0
+    pub real_uid: i64 = 0
+    pub server_time_offset: i64 = 7200
+
+    pub db_path: str = "./data/bot.sqlite"
+    pub heartbeat_path: str = "./data/heartbeat"
+    // Minutes east of UTC for every timestamp the bot prints. Tehran is
+    // +3:30 all year, since Iran no longer observes daylight saving.
+    pub timezone_offset: i64 = 210
+
+    pub default_amount: f64 = 1.0
+    pub default_timeframe: i64 = 60
+    pub default_duration: i64 = 60
+
+    pub min_amount: f64 = 1.0
+    pub max_amount: f64 = 20000.0
+    pub min_duration: i64 = 5
+    pub max_duration: i64 = 43200
+
+    pub session_idle_ttl: i64 = 60
+    pub order_ack_timeout: i64 = 10
+    pub order_settle_grace: i64 = 90
+    pub max_tick_gap: i64 = 30
+end
+
+func EnvOr(name: str, fallback: str): str:
+    v := str.Trim(os.Env(name))
+    if v.len() == 0: ret fallback end
+    ret v
+end
+
+func EnvInt(name: str, fallback: i64): i64:
+    v := str.Trim(os.Env(name))
+    if v.len() == 0: ret fallback end
+    ret str.ToInt(v) as i64
+end
+
+func EnvFloat(name: str, fallback: f64): f64:
+    v := str.Trim(os.Env(name))
+    if v.len() == 0: ret fallback end
+    ret str.ToFloat(v)
+end
+
+// Reads the environment into a Config. The token is the only value the bot
+// cannot start without; Ok() reports whether it was there.
+pub func Load(): Config:
+    mut c := Config {}
+    c.token = str.Trim(os.Env("TELEGRAM_BOT_TOKEN"))
+    c.admin_ids = str.Trim(os.Env("TELEGRAM_ADMIN_IDS"))
+
+    c.demo_ssid = str.Trim(os.Env("PO_DEMO_SSID"))
+    c.real_ssid = str.Trim(os.Env("PO_REAL_SSID"))
+    c.demo_uid = EnvInt("PO_DEMO_UID", 0 as i64)
+    c.real_uid = EnvInt("PO_REAL_UID", 0 as i64)
+    c.server_time_offset = EnvInt("PO_SERVER_TIME_OFFSET", 7200 as i64)
+
+    c.db_path = EnvOr("DB_PATH", "./data/bot.sqlite")
+    c.heartbeat_path = EnvOr("HEARTBEAT_PATH", "./data/heartbeat")
+    c.timezone_offset = EnvInt("DISPLAY_TIMEZONE_OFFSET_MINUTES", 210 as i64)
+
+    c.default_amount = EnvFloat("DEFAULT_AMOUNT", 1.0)
+    c.default_timeframe = EnvInt("DEFAULT_TIMEFRAME_SECONDS", 60 as i64)
+    c.default_duration = EnvInt("DEFAULT_DURATION_SECONDS", 60 as i64)
+
+    c.min_amount = EnvFloat("MIN_AMOUNT", 1.0)
+    c.max_amount = EnvFloat("MAX_AMOUNT", 20000.0)
+    c.min_duration = EnvInt("MIN_DURATION_SECONDS", 5 as i64)
+    c.max_duration = EnvInt("MAX_DURATION_SECONDS", 43200 as i64)
+
+    c.session_idle_ttl = EnvInt("SESSION_IDLE_TTL_SECONDS", 60 as i64)
+    c.order_ack_timeout = EnvInt("ORDER_ACK_TIMEOUT_SECONDS", 10 as i64)
+    c.order_settle_grace = EnvInt("ORDER_SETTLE_GRACE_SECONDS", 90 as i64)
+    c.max_tick_gap = EnvInt("MAX_TICK_GAP_SECONDS", 30 as i64)
+    ret c
+end
+
+pub func Ok(c: Config): bool:
+    ret c.token.len() >= 10
+end
+
+// The endpoints for one account, newest first; the client rotates through
+// them when one keeps refusing.
+pub func Servers(mode: str): Vector<str>:
+    mut v := Vector {} as Vector<str>
+    if mode == "demo":
+        v.push("https://demo-api-eu.po.market")
+        v.push("https://try-demo-eu.po.market")
+    else:
+        v.push("https://api-eu.po.market")
+        v.push("https://api-l.po.market")
+        v.push("https://api-fr.po.market")
+        v.push("https://api-c.po.market")
+        v.push("https://api-us-north.po.market")
+        v.push("https://api-us-south.po.market")
+        v.push("https://api-asia.po.market")
+    end
+    ret v
+end
+
+// The Origin header the broker expects with those endpoints.
+pub func Origin(): str:
+    ret "https://p.finance"
+end
+
+// The trade's real length, whichever way its expiry is written, for the
+// limit check before anything is sent to the broker.
+pub func EffectiveDuration(expiry_mode: str, duration_seconds: i64, timeframe_seconds: i64, candle_count: i64): i64:
+    if expiry_mode == "fixed": ret duration_seconds end
+    ret timeframe_seconds * candle_count
+end
+
+// Says in Persian what is out of bounds, or "" when the order is allowed.
+pub func CheckLimits(c: Config, amount: f64, expiry_mode: str, duration_seconds: i64, timeframe_seconds: i64, candle_count: i64): str:
+    if amount < c.min_amount || amount > c.max_amount:
+        ret "مبلغ باید بین " + timex.FormatMoney(c.min_amount) + " و " + timex.FormatMoney(c.max_amount) + " باشد."
+    end
+    d := EffectiveDuration(expiry_mode, duration_seconds, timeframe_seconds, candle_count)
+    if d < c.min_duration:
+        ret "مدت معامله نباید کمتر از " + timex.FormatDuration(c.min_duration) + " باشد."
+    end
+    if d > c.max_duration:
+        ret "مدت معامله نباید بیشتر از " + timex.FormatDuration(c.max_duration) + " باشد."
+    end
+    ret ""
+end

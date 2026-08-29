@@ -1,0 +1,623 @@
+/*
+ * The /new panel: one inline keyboard per chat that builds an order.
+ *
+ * Buttons that only flip a setting change it on the spot. The six values a
+ * user has to type - symbol, price, amount, duration, candle count, order
+ * validity - are asked for in their own message with the reply box already
+ * open, because a panel that silently waits for typing is a panel nobody
+ * knows how to answer.
+ */
+package wizard
+
+import str
+import types "types.salam"
+import timex "timex.salam"
+import texts "texts.salam"
+import parse "parse.salam"
+import symbols "symbols.salam"
+import tgapi "tgapi.salam"
+import telegram.bot
+
+pub const EXPIRED_NOTE := "⌛️ این پنل منقضی شده و دکمه‌هایش دیگر کار نمی‌کنند. برای سفارش تازه /new را بزنید."
+pub const REPLACED_NOTE := "⌛️ این پنل باطل شد چون پنل تازه‌تری ساخته شد. از پنل جدید استفاده کنید."
+
+mut _drafts := Vector {} as Vector<Draft>
+
+// One chat's half-built order, plus where its panel and prompt live.
+@en "Draft"
+@fa "پیش‌نویس"
+pub struct Draft:
+    pub chat_id: i64 = 0
+    pub message_id: i64 = 0
+    pub prompt_id: i64 = 0
+
+    pub symbol: str = ""
+    pub trigger_price: f64 = 0.0
+    pub has_price: bool = false
+
+    pub direction: str = types.CALL
+    pub trigger_mode: str = types.TRIGGER_TOUCH
+    pub expiry_mode: str = types.EXPIRY_FIXED
+    pub chart_type: str = types.CHART_CANDLE
+    pub account_mode: str = types.MODE_DEMO
+
+    pub timeframe_seconds: i64 = 60
+    pub duration_seconds: i64 = 60
+    pub candle_count: i64 = 1
+    pub amount: f64 = 1.0
+    pub valid_for_seconds: i64 = 0
+
+    // "" or one of symbol|price|amount|duration|candles|valid
+    pub awaiting: str = ""
+    // "" or chart|tf
+    pub menu: str = ""
+    pub info: bool = false
+    pub rendered: str = ""
+end
+
+func Find(chat_id: i64): int:
+    mut i := 0
+    while i < _drafts.len():
+        if _drafts.get(i).chat_id == chat_id: ret i end
+        i = i + 1
+    end
+    ret 0 - 1
+end
+
+func PromptTitle(field: str): str:
+    if field == "symbol": ret "نماد را تایپ کنید و بفرستید." end
+    if field == "price": ret "قیمت ورود هدف را تایپ کنید و بفرستید." end
+    if field == "amount": ret "مبلغ معامله را به دلار تایپ کنید و بفرستید." end
+    if field == "duration": ret "مدت ماندن در معامله را تایپ کنید و بفرستید." end
+    if field == "candles": ret "تعداد کندل را تایپ کنید و بفرستید." end
+    ret "مدت اعتبار سفارش را تایپ کنید و بفرستید."
+end
+
+func PromptMessage(field: str): str:
+    if field == "symbol":
+        ret "⌨️ <b>نماد را تایپ کنید</b>\n\nنام نماد را بنویسید و بفرستید.\n" +
+            "نمونه: <code>EURUSD</code> · <code>GBPAUD_otc</code> · <code>BTCUSD</code>\n\n" +
+            "اگر نام دقیق را نمی‌دانید، با <code>/symbols eur</code> جست‌وجو کنید."
+    end
+    if field == "price":
+        ret "⌨️ <b>قیمت ورود هدف را تایپ کنید</b>\n\nعددی که اگر قیمت نماد به آن برسد، معامله باز شود.\n" +
+            "نمونه: <code>1.95320</code> · <code>۱٫۰۸۵۴۰</code>\n\n" +
+            "قیمت لحظه‌ای را می‌توانید با <code>/price EURUSD</code> ببینید."
+    end
+    if field == "amount":
+        ret "⌨️ <b>مبلغ معامله را تایپ کنید</b>\n\nمبلغ به دلار، فقط عدد.\nنمونه: <code>1</code> · <code>5</code> · <code>12.5</code>"
+    end
+    if field == "duration":
+        ret "⌨️ <b>مدت معامله را تایپ کنید</b>\n\nمعامله چقدر باز بماند؟\n" +
+            "نمونه: <code>60</code> · <code>1m</code> · <code>۹۰ ثانیه</code> · <code>2 دقیقه</code> · <code>1h 30m</code>\n\n" + texts.TimeFormatHint()
+    end
+    if field == "candles":
+        ret "⌨️ <b>تعداد کندل را تایپ کنید</b>\n\nمعامله تا پایان چند کندل باز بماند؟ فقط عدد.\n" +
+            "نمونه: <code>1</code> یعنی تا پایان همین کندل جاری · <code>3</code> یعنی تا پایان سومین کندل."
+    end
+    ret "⌨️ <b>مدت اعتبار سفارش را تایپ کنید</b>\n\nتا چه مدت منتظر رسیدن قیمت به هدف بمانیم؟ بعد از آن سفارش منقضی می‌شود.\n" +
+        "نمونه: <code>30m</code> · <code>۳۰ دقیقه</code> · <code>2h</code> · <code>1 روز</code>\n" +
+        "برای اینکه هیچ‌وقت منقضی نشود، بفرستید <code>0</code>.\n\n" + texts.TimeFormatHint()
+end
+
+func PromptPlaceholder(field: str): str:
+    if field == "symbol": ret "مثلاً EURUSD یا GBPAUD_otc" end
+    if field == "price": ret "مثلاً 1.95320" end
+    if field == "amount": ret "مبلغ به دلار، مثلاً 5" end
+    if field == "duration": ret "مثلاً 1m یا 90 یا 2 دقیقه" end
+    if field == "candles": ret "مثلاً 1" end
+    ret "مثلاً 30m یا 2 ساعت · 0 یعنی بی‌نهایت"
+end
+
+func PromptToast(field: str): str:
+    if field == "symbol": ret "⌨️ نماد را همین‌جا تایپ کنید و بفرستید. مثلاً EURUSD" end
+    if field == "price": ret "⌨️ قیمت هدف را همین‌جا تایپ کنید و بفرستید. مثلاً 1.95320" end
+    if field == "amount": ret "⌨️ مبلغ را به دلار همین‌جا تایپ کنید و بفرستید. مثلاً 5" end
+    if field == "duration": ret "⌨️ مدت معامله را همین‌جا تایپ کنید. مثلاً 1m یا 90 یا 2 دقیقه" end
+    if field == "candles": ret "⌨️ تعداد کندل را همین‌جا تایپ کنید. مثلاً 1" end
+    ret "⌨️ مدت اعتبار را همین‌جا تایپ کنید. مثلاً 30m · 0 یعنی بی‌نهایت"
+end
+
+func IsPromptField(action: str): bool:
+    ret action == "symbol" || action == "price" || action == "amount" || action == "duration" || action == "candles" || action == "valid"
+end
+
+func SymbolText(d: Draft): str:
+    if d.symbol.len() == 0: ret "(انتخاب نشده)" end
+    ret texts.EscapeHtml(d.symbol)
+end
+
+func PriceText(d: Draft): str:
+    if !d.has_price: ret "(تعیین نشده)" end
+    ret timex.FormatPrice(d.trigger_price)
+end
+
+func ValidText(d: Draft): str:
+    if d.valid_for_seconds <= 0: ret "بدون محدودیت" end
+    ret timex.FormatDurationFa(d.valid_for_seconds)
+end
+
+// The panel body: the order as it stands, then whatever the panel is
+// currently asking of the user.
+func RenderPanel(d: Draft, final: bool): str:
+    mut out := "🧾 <b>ساخت سفارش جدید</b>\n\n"
+    out = out + "نماد: <b>" + SymbolText(d) + "</b>\n"
+    out = out + "قیمت ورود هدف: <b>" + PriceText(d) + "</b>\n"
+    out = out + "جهت: <b>" + texts.Direction(d.direction) + "</b>\n"
+    out = out + "نحوهٔ ورود: <b>" + texts.TriggerLabel(d.trigger_mode) + "</b>\n"
+    if d.expiry_mode == types.EXPIRY_FIXED:
+        out = out + "مدت معامله: <b>" + timex.FormatDurationFa(d.duration_seconds) + "</b> (" + texts.ExpiryLabel(types.EXPIRY_FIXED) + ")\n"
+    else:
+        out = out + "مدت معامله: <b>" + str.FromInt(d.candle_count) + " کندل " + timex.TimeframeLabel(d.timeframe_seconds) + "</b> (" + texts.ExpiryLabel(types.EXPIRY_FLOATING) + ")\n"
+    end
+    out = out + "چارت: <b>" + timex.TimeframeLabel(d.timeframe_seconds) + " · " + texts.ChartLabel(d.chart_type) + "</b>\n"
+    out = out + "مبلغ: <b>" + timex.FormatMoney(d.amount) + "</b>\n"
+    out = out + "حساب: <b>" + texts.AccountLabel(d.account_mode) + "</b>\n"
+    out = out + "اعتبار سفارش: <b>" + ValidText(d) + "</b>"
+    if final: ret out end
+
+    if d.menu == "chart":
+        out = out + "\n\n📈 <b>نوع چارت را انتخاب کنید</b>\n\n"
+        out = out + "• <b>" + texts.ChartLabel(types.CHART_CANDLE) + "</b> — " + texts.ChartHelp(types.CHART_CANDLE) + "\n"
+        out = out + "• <b>" + texts.ChartLabel(types.CHART_HEIKIN_ASHI) + "</b> — " + texts.ChartHelp(types.CHART_HEIKIN_ASHI) + "\n"
+        out = out + "• <b>" + texts.ChartLabel(types.CHART_LINE) + "</b> — " + texts.ChartHelp(types.CHART_LINE) + "\n\n"
+        out = out + "نوع چارت فقط شکل کندل‌ها را عوض می‌کند؛ قیمت ورود و بسته شدن همیشه قیمت واقعی بازار است."
+        ret out
+    end
+
+    if d.menu == "tf":
+        out = out + "\n\n⏱ <b>تایم‌فریم چارت را انتخاب کنید</b>\n\nطول هر کندل چقدر باشد. در انقضای شناور، معامله تا پایان همین کندل‌ها باز می‌ماند."
+        ret out
+    end
+
+    if d.info:
+        out = out + "\n\n❓ <b>هر گزینه چه می‌کند؟</b>\n\n"
+        out = out + "<b>جهت</b> — خرید یعنی پیش‌بینی می‌کنید قیمت بالا برود، فروش یعنی پایین.\n"
+        out = out + "<b>نحوهٔ ورود</b> — " + texts.TriggerHelp(d.trigger_mode) + "\n"
+        out = out + "<b>انقضا</b> — " + texts.ExpiryHelp(d.expiry_mode) + "\n"
+        out = out + "<b>چارت</b> — " + texts.ChartHelp(d.chart_type) + "\n"
+        out = out + "<b>اعتبار سفارش</b> — اگر تا این مدت قیمت به هدف نرسد، سفارش لغو می‌شود.\n\n"
+        out = out + "دکمه‌های ✍️ مقدارشان را از شما می‌پرسند: بعد از زدنشان باید مقدار را تایپ کنید و بفرستید."
+    end
+
+    if d.awaiting.len() > 0:
+        out = out + "\n\n✍️ " + PromptTitle(d.awaiting) + "\nپاسخ را در همین چت بنویسید و بفرستید."
+    else d.symbol.len() == 0 || !d.has_price:
+        out = out + "\n\n⚠️ برای ثبت، نماد و قیمت ورود هدف الزامی است. روی دکمه‌شان بزنید و مقدار را تایپ کنید."
+    else:
+        out = out + "\n\n💡 روی هر دکمه بزنید تا تغییر کند. دکمه‌های ✍️ مقدارشان را از شما می‌پرسند."
+    end
+    ret out
+end
+
+func TimeframeKeyboard(): str:
+    mut k := tgapi.NewKeyboard()
+    tgapi.Button(k, "5s", "w:tf:5")
+    tgapi.Button(k, "10s", "w:tf:10")
+    tgapi.Button(k, "15s", "w:tf:15")
+    tgapi.Button(k, "30s", "w:tf:30")
+    tgapi.Row(k)
+    tgapi.Button(k, "1m", "w:tf:60")
+    tgapi.Button(k, "2m", "w:tf:120")
+    tgapi.Button(k, "3m", "w:tf:180")
+    tgapi.Button(k, "5m", "w:tf:300")
+    tgapi.Row(k)
+    tgapi.Button(k, "10m", "w:tf:600")
+    tgapi.Button(k, "15m", "w:tf:900")
+    tgapi.Button(k, "30m", "w:tf:1800")
+    tgapi.Button(k, "1h", "w:tf:3600")
+    tgapi.Row(k)
+    tgapi.Button(k, "4h", "w:tf:14400")
+    tgapi.Button(k, "« بازگشت", "w:refresh")
+    ret tgapi.KeyboardJson(k)
+end
+
+func ChartKeyboard(d: Draft): str:
+    mut k := tgapi.NewKeyboard()
+    mut mark := ""
+    if d.chart_type == types.CHART_CANDLE: mark = "✅ " end
+    tgapi.Button(k, mark + texts.ChartLabel(types.CHART_CANDLE), "w:chart:candle")
+    tgapi.Row(k)
+    mark = ""
+    if d.chart_type == types.CHART_HEIKIN_ASHI: mark = "✅ " end
+    tgapi.Button(k, mark + texts.ChartLabel(types.CHART_HEIKIN_ASHI), "w:chart:heikin_ashi")
+    tgapi.Row(k)
+    mark = ""
+    if d.chart_type == types.CHART_LINE: mark = "✅ " end
+    tgapi.Button(k, mark + texts.ChartLabel(types.CHART_LINE), "w:chart:line")
+    tgapi.Row(k)
+    tgapi.Button(k, "« بازگشت", "w:refresh")
+    ret tgapi.KeyboardJson(k)
+end
+
+func MainKeyboard(d: Draft): str:
+    mut k := tgapi.NewKeyboard()
+
+    mut symbol := d.symbol
+    if symbol.len() == 0: symbol = "—" end
+    mut price := "—"
+    if d.has_price: price = timex.FormatPrice(d.trigger_price) end
+    tgapi.Button(k, "✍️ نماد: " + symbol, "w:symbol")
+    tgapi.Button(k, "✍️ قیمت: " + price, "w:price")
+    tgapi.Row(k)
+
+    mut direction := "خرید"
+    if d.direction == types.PUT: direction = "فروش" end
+    mut account := "دمو"
+    if d.account_mode == types.MODE_REAL: account = "ریل" end
+    tgapi.Button(k, "جهت: " + direction, "w:direction")
+    tgapi.Button(k, "حساب: " + account, "w:account")
+    tgapi.Row(k)
+
+    mut entry := "لحظه‌ای"
+    if d.trigger_mode == types.TRIGGER_NEXT_CANDLE: entry = "کندل بعدی" end
+    mut expiry := "ثابت"
+    if d.expiry_mode == types.EXPIRY_FLOATING: expiry = "شناور" end
+    tgapi.Button(k, "ورود: " + entry, "w:trigger")
+    tgapi.Button(k, "انقضا: " + expiry, "w:expiry")
+    tgapi.Row(k)
+
+    if d.expiry_mode == types.EXPIRY_FIXED:
+        tgapi.Button(k, "✍️ مدت: " + timex.FormatDuration(d.duration_seconds), "w:duration")
+    else:
+        tgapi.Button(k, "✍️ تعداد کندل: " + str.FromInt(d.candle_count), "w:candles")
+    end
+    tgapi.Button(k, "تایم‌فریم: " + timex.TimeframeLabel(d.timeframe_seconds), "w:tf")
+    tgapi.Row(k)
+
+    tgapi.Button(k, "چارت: " + texts.ChartLabel(d.chart_type), "w:chart")
+    tgapi.Button(k, "✍️ مبلغ: " + timex.FormatMoney(d.amount), "w:amount")
+    tgapi.Row(k)
+
+    mut valid := "∞"
+    if d.valid_for_seconds > 0: valid = timex.FormatDuration(d.valid_for_seconds) end
+    tgapi.Button(k, "✍️ اعتبار: " + valid, "w:valid")
+    mut info := "❓ راهنما"
+    if d.info: info = "✖️ بستن راهنما" end
+    tgapi.Button(k, info, "w:info")
+    tgapi.Row(k)
+
+    tgapi.Button(k, "✅ ثبت سفارش", "w:submit")
+    tgapi.Button(k, "❌ انصراف", "w:cancel")
+    ret tgapi.KeyboardJson(k)
+end
+
+func Markup(d: Draft): str:
+    if d.menu == "tf": ret TimeframeKeyboard() end
+    if d.menu == "chart": ret ChartKeyboard(d) end
+    ret MainKeyboard(d)
+end
+
+// Redraws the panel, unless it would say exactly what it already says.
+func Refresh(b: bot.Bot, index: int):
+    mut d := _drafts.get(index)
+    if d.message_id == 0: ret end
+
+    text := RenderPanel(d, false)
+    markup := Markup(d)
+    snapshot := text + "||" + markup
+    if snapshot == d.rendered: ret end
+
+    // Claimed before the call so a second tap on the same button cannot
+    // send the very same edit.
+    d.rendered = snapshot
+    _drafts.set(index, d)
+    if !tgapi.Edit(b, d.chat_id, d.message_id, text, markup):
+        mut failed := _drafts.get(index)
+        failed.rendered = ""
+        _drafts.set(index, failed)
+    end
+end
+
+func DropPrompt(b: bot.Bot, index: int):
+    mut d := _drafts.get(index)
+    if d.prompt_id == 0: ret end
+    tgapi.Delete(b, d.chat_id, d.prompt_id)
+    d.prompt_id = 0
+    _drafts.set(index, d)
+end
+
+// Asks for one value in its own message, with the reply box open.
+func SendPrompt(b: bot.Bot, index: int, field: str):
+    DropPrompt(b, index)
+    mut d := _drafts.get(index)
+    id := tgapi.Send(b, d.chat_id, PromptMessage(field), tgapi.ForceReplyJson(PromptPlaceholder(field)))
+    d.prompt_id = id
+    _drafts.set(index, d)
+end
+
+// Leaves a panel readable but dead: the summary stays, the buttons go, and
+// a last line says why.
+func Freeze(b: bot.Bot, d: Draft, note: str):
+    if d.message_id == 0: ret end
+    mut text := RenderPanel(d, true)
+    if note.len() > 0: text = text + "\n\n" + note end
+    _e := tgapi.Edit(b, d.chat_id, d.message_id, text, "")
+end
+
+func Remove(index: int):
+    _drafts.remove_at(index)
+end
+
+// Writes one typed answer into the draft, or says what was wrong with it.
+func ApplyInput(d &: Draft, field: str, raw: str): str:
+    if field == "symbol":
+        symbol := symbols.Normalize(raw)
+        if symbol.len() < 3: ret "نماد نامعتبر است. مثلاً <code>EURUSD</code> یا <code>GBPAUD_otc</code> را بفرستید." end
+        d.symbol = symbol
+        ret ""
+    end
+    if field == "price":
+        price := parse.ParseNumber(raw)
+        if !parse.IsNumber(price) || price <= 0.0: ret "قیمت نامعتبر است. فقط عدد بفرستید، مثلاً <code>1.95320</code>." end
+        d.trigger_price = price
+        d.has_price = true
+        ret ""
+    end
+    if field == "amount":
+        amount := parse.ParseNumber(raw)
+        if !parse.IsNumber(amount) || amount <= 0.0: ret "مبلغ نامعتبر است. فقط عدد بفرستید، مثلاً <code>5</code>." end
+        d.amount = amount
+        ret ""
+    end
+    if field == "duration":
+        seconds := timex.ParseDuration(raw)
+        if seconds == timex.INVALID:
+            ret "مدت نامعتبر است. مثلاً <code>60</code> یا <code>1m</code> یا <code>۹۰ ثانیه</code>.\n\n" + texts.TimeFormatHint()
+        end
+        d.duration_seconds = seconds
+        d.expiry_mode = types.EXPIRY_FIXED
+        ret ""
+    end
+    if field == "candles":
+        count := parse.ParseNumber(raw)
+        if !parse.IsNumber(count) || count < 1.0: ret "تعداد کندل نامعتبر است. عددی بزرگ‌تر از صفر بفرستید، مثلاً <code>1</code>." end
+        d.candle_count = (count + 0.5) as i64
+        d.expiry_mode = types.EXPIRY_FLOATING
+        ret ""
+    end
+
+    trimmed := str.ToEnglishDigits(str.Trim(raw))
+    if trimmed == "0":
+        d.valid_for_seconds = 0 as i64
+        ret ""
+    end
+    seconds := timex.ParseDuration(trimmed)
+    if seconds == timex.INVALID:
+        ret "مدت اعتبار نامعتبر است. مثلاً <code>30m</code> یا <code>۳۰ دقیقه</code>؛ برای بی‌نهایت <code>0</code>.\n\n" + texts.TimeFormatHint()
+    end
+    d.valid_for_seconds = seconds
+    ret ""
+end
+
+// Opens a fresh panel, retiring whatever this chat had open before.
+pub func Open(b: bot.Bot, chat_id: i64, seed: Draft):
+    existing := Find(chat_id)
+    if existing >= 0:
+        DropPrompt(b, existing)
+        Freeze(b, _drafts.get(existing), REPLACED_NOTE)
+        Remove(existing)
+    end
+
+    mut d := seed
+    d.chat_id = chat_id
+    d.awaiting = ""
+    d.menu = ""
+    d.info = false
+    d.prompt_id = 0
+    d.rendered = ""
+
+    text := RenderPanel(d, false)
+    markup := Markup(d)
+    d.message_id = tgapi.Send(b, chat_id, text, markup)
+    d.rendered = text + "||" + markup
+    _drafts.push(d)
+end
+
+pub func Has(chat_id: i64): bool:
+    ret Find(chat_id) >= 0
+end
+
+pub func IsAwaiting(chat_id: i64): bool:
+    idx := Find(chat_id)
+    if idx < 0: ret false end
+    ret _drafts.get(idx).awaiting.len() > 0
+end
+
+pub func Draft Of(chat_id: i64): Draft:
+    idx := Find(chat_id)
+    if idx < 0: ret Draft {} end
+    ret _drafts.get(idx)
+end
+
+pub func Close(chat_id: i64):
+    idx := Find(chat_id)
+    if idx >= 0: Remove(idx) end
+end
+
+// Drops a pending question, for when the user runs a command instead of
+// answering it.
+pub func AbortPrompt(b: bot.Bot, chat_id: i64):
+    idx := Find(chat_id)
+    if idx < 0: ret end
+    mut d := _drafts.get(idx)
+    if d.awaiting.len() == 0: ret end
+    d.awaiting = ""
+    _drafts.set(idx, d)
+    DropPrompt(b, idx)
+    Refresh(b, idx)
+end
+
+/*
+ * One tap on a panel.
+ *
+ * Returns "submit" when the draft is complete and the caller should place
+ * it, "" otherwise. A tap on a panel this chat has replaced retires that
+ * panel and leaves the live one alone.
+ */
+pub func HandleTap(b: bot.Bot, chat_id: i64, payload: str, message_id: i64, query_id: str, message_text: str): str:
+    idx := Find(chat_id)
+    if idx < 0:
+        if message_text.len() > 0 && !str.Contains(message_text, texts.RETIRED_MARK):
+            _e := tgapi.EditPlain(b, chat_id, message_id, message_text + "\n\n" + EXPIRED_NOTE)
+        end
+        tgapi.Answer(b, query_id, "این پنل منقضی شده است. برای سفارش تازه /new را بزنید.", false)
+        ret ""
+    end
+
+    mut d := _drafts.get(idx)
+    if d.message_id != 0 && message_id != 0 && message_id != d.message_id:
+        if message_text.len() > 0 && !str.Contains(message_text, texts.RETIRED_MARK):
+            _e := tgapi.EditPlain(b, chat_id, message_id, message_text + "\n\n" + REPLACED_NOTE)
+        end
+        tgapi.Answer(b, query_id, "این پنل باطل شده است. از پنل تازه‌تر پایین چت استفاده کنید.", false)
+        ret ""
+    end
+
+    mut action := payload
+    mut argument := ""
+    colon := str.IndexOf(payload, ":")
+    if colon >= 0:
+        action = payload.substr(0, colon)
+        argument = payload.substr(colon + 1, payload.len() - colon - 1)
+    end
+
+    // Any tap answers or abandons the question we were waiting on.
+    if d.awaiting.len() > 0:
+        d.awaiting = ""
+        _drafts.set(idx, d)
+        DropPrompt(b, idx)
+        d = _drafts.get(idx)
+    end
+
+    if IsPromptField(action):
+        d.awaiting = action
+        d.menu = ""
+        _drafts.set(idx, d)
+        tgapi.Answer(b, query_id, PromptToast(action), false)
+        Refresh(b, idx)
+        SendPrompt(b, idx, action)
+        ret ""
+    end
+
+    if action == "cancel":
+        tgapi.Answer(b, query_id, "لغو شد.", false)
+        DropPrompt(b, idx)
+        Freeze(b, _drafts.get(idx), "❌ ساخت سفارش لغو شد.")
+        Remove(idx)
+        ret ""
+    end
+
+    if action == "submit":
+        if d.symbol.len() == 0 || !d.has_price:
+            tgapi.Answer(b, query_id, "اول نماد و قیمت ورود را کامل کنید: روی دکمه‌شان بزنید و مقدار را تایپ کنید.", true)
+            Refresh(b, idx)
+            ret ""
+        end
+        tgapi.Answer(b, query_id, "در حال ثبت…", false)
+        d.menu = ""
+        d.info = false
+        _drafts.set(idx, d)
+        Freeze(b, _drafts.get(idx), "")
+        ret "submit"
+    end
+
+    mut toast := ""
+    if action == "direction":
+        if d.direction == types.CALL: d.direction = types.PUT else: d.direction = types.CALL end
+    else action == "account":
+        if d.account_mode == types.MODE_DEMO: d.account_mode = types.MODE_REAL else: d.account_mode = types.MODE_DEMO end
+    else action == "trigger":
+        if d.trigger_mode == types.TRIGGER_TOUCH: d.trigger_mode = types.TRIGGER_NEXT_CANDLE
+        else: d.trigger_mode = types.TRIGGER_TOUCH
+        end
+        toast = texts.TriggerHelp(d.trigger_mode)
+    else action == "expiry":
+        if d.expiry_mode == types.EXPIRY_FIXED: d.expiry_mode = types.EXPIRY_FLOATING
+        else: d.expiry_mode = types.EXPIRY_FIXED
+        end
+        toast = texts.ExpiryHelp(d.expiry_mode)
+    else action == "info":
+        d.info = !d.info
+    else action == "refresh":
+        d.menu = ""
+    else action == "chart":
+        if argument.len() == 0:
+            d.menu = "chart"
+            toast = "توضیح هر نوع چارت را زیر پنل بخوانید."
+        else:
+            chart := parse.ChartType(argument)
+            if chart.len() > 0:
+                d.chart_type = chart
+                toast = texts.ChartHelp(chart)
+            end
+            d.menu = ""
+        end
+    else action == "tf":
+        if argument.len() == 0:
+            d.menu = "tf"
+        else:
+            seconds := str.ToInt(argument) as i64
+            if seconds > 0: d.timeframe_seconds = seconds end
+            d.menu = ""
+        end
+    else:
+        tgapi.Answer(b, query_id, "", false)
+        ret ""
+    end
+
+    _drafts.set(idx, d)
+    tgapi.Answer(b, query_id, toast, false)
+    Refresh(b, idx)
+    ret ""
+end
+
+/*
+ * A plain message while a panel is waiting for one.
+ *
+ * Returns true when the text was the answer to a prompt, so the caller
+ * knows not to treat it as anything else.
+ */
+pub func HandleText(b: bot.Bot, chat_id: i64, text: str, message_id: i64): bool:
+    idx := Find(chat_id)
+    if idx < 0: ret false end
+    mut d := _drafts.get(idx)
+    if d.awaiting.len() == 0: ret false end
+
+    field := d.awaiting
+    problem := ApplyInput(d, field, text)
+    if problem.len() > 0:
+        _drafts.set(idx, d)
+        _m := tgapi.Send(b, chat_id, "⚠️ " + problem, tgapi.ForceReplyJson(PromptPlaceholder(field)))
+        ret true
+    end
+
+    d.awaiting = ""
+    _drafts.set(idx, d)
+    DropPrompt(b, idx)
+    Refresh(b, idx)
+    tgapi.Delete(b, chat_id, message_id)
+    ret true
+end
+
+// The order a finished panel describes.
+pub func Spec(chat_id: i64): types.OrderSpec:
+    mut spec := types.OrderSpec {}
+    idx := Find(chat_id)
+    if idx < 0: ret spec end
+    d := _drafts.get(idx)
+
+    spec.symbol = d.symbol
+    spec.direction = d.direction
+    spec.trigger_price = d.trigger_price
+    spec.trigger_mode = d.trigger_mode
+    spec.timeframe_seconds = d.timeframe_seconds
+    spec.chart_type = d.chart_type
+    spec.expiry_mode = d.expiry_mode
+    spec.duration_seconds = d.duration_seconds
+    spec.candle_count = d.candle_count
+    spec.amount = d.amount
+    spec.account_mode = d.account_mode
+    spec.valid_for_seconds = d.valid_for_seconds
+    ret spec
+end

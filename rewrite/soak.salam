@@ -1,0 +1,95 @@
+// Runs the engine's hot loop against the live demo socket for a few
+// minutes, with an order that is meant to expire, so the tick path, the
+// housekeeper and the expiry rule are all exercised while an outside
+// observer watches the process size.
+package main
+
+import str
+import time
+import config "config.salam"
+import store "store.salam"
+import broker "broker.salam"
+import engine "engine.salam"
+import ssid "ssid.salam"
+import types "types.salam"
+import timex "timex.salam"
+
+func main:
+    c := config.Load()
+    if c.demo_ssid.len() == 0:
+        println "set PO_DEMO_SSID to run this"
+        ret
+    end
+    auth := ssid.Parse(c.demo_ssid, types.MODE_DEMO, c.demo_uid)
+    if !auth.ok:
+        println "SSID unreadable: " + auth.error
+        ret
+    end
+
+    if !store.Open("/tmp/salam-soak.sqlite"):
+        println "could not open the scratch database"
+        ret
+    end
+    broker.SetCredentials(types.MODE_DEMO, auth)
+    engine.Start(c)
+
+    symbol := "EURUSD_otc"
+    price := engine.Price(types.MODE_DEMO, symbol, 20000 as i64)
+    if price == 0.0:
+        println "no price; is the market open?"
+        ret
+    end
+
+    mut o := types.Order {}
+    o.chat_id = 1 as i64
+    o.account_mode = types.MODE_DEMO
+    o.symbol = symbol
+    o.direction = types.CALL
+    // Far above the market: this order is meant to expire, not to trade.
+    o.trigger_price = price * 2.0
+    o.amount = 1.0
+    o.duration_seconds = 60 as i64
+    o.timeframe_seconds = 60 as i64
+    o.valid_until = timex.NowSeconds() + 90.0
+
+    saved := engine.CreateOrder(o)
+    println "order " + saved.id + " pending, expires in 90s (trigger " + timex.FormatPrice(saved.trigger_price) + ")"
+
+    started := time.NowMillis()
+    deadline := started + 240000 as i64
+    mut last_report := 0.0
+    mut last_house := 0.0
+    mut turns := 0 as i64
+
+    while time.NowMillis() < deadline:
+        engine.Step(120)
+        turns = turns + 1 as i64
+        now := timex.NowSeconds()
+
+        if now - last_house >= 1.0:
+            last_house = now
+            engine.Housekeep()
+        end
+
+        while true:
+            e := engine.TakeEvent()
+            if e.kind.len() == 0: break end
+            println "event: " + e.kind + " " + e.order.id + " " + e.order.status + " " + e.detail
+        end
+
+        if now - last_report >= 20.0:
+            last_report = now
+            s := broker.Get(broker.Find(types.MODE_DEMO, symbol))
+            println "t+" + str.FromInt((time.NowMillis() - started) / 1000 as i64) + "s turns=" + str.FromInt(turns) +
+                " price=" + timex.FormatPrice(s.price) + " ready=" + (s.ready ? "yes" : "no") +
+                " sessions=" + str.FromInt(broker.Count() as i64)
+        end
+    end
+
+    final := store.Get(saved.id)
+    println "---"
+    println "final status: " + final.status + " (" + final.note + ")"
+    println "turns:        " + str.FromInt(turns)
+    engine.Stop()
+    store.Close()
+end

@@ -1,0 +1,65 @@
+// Proves the Telegram half without touching the update queue: getMe, then
+// one message that is edited and deleted again, so nothing is left behind
+// and no getUpdates call can clash with another running instance.
+package main
+
+import str
+import time
+import telegram.bot
+import config "config.salam"
+import tgapi "tgapi.salam"
+import texts "texts.salam"
+import types "types.salam"
+import timex "timex.salam"
+
+func main:
+    c := config.Load()
+    if !config.Ok(c):
+        println "TELEGRAM_BOT_TOKEN is missing"
+        ret
+    end
+
+    b := bot.NewBot(c.token)
+    me := bot.GetMe(b)
+    if !me.ok:
+        println "getMe failed: " + me.description
+        ret
+    end
+    println "getMe: @" + bot.ParseUser(me.result).username
+
+    ids := str.Split(c.admin_ids, ",")
+    if ids.len() == 0:
+        println "no TELEGRAM_ADMIN_IDS to message"
+        ret
+    end
+    chat_id := str.ToInt(str.Trim(ids.get(0))) as i64
+
+    mut k := tgapi.NewKeyboard()
+    tgapi.Button(k, "✍️ نماد: EURUSD_otc", "w:symbol")
+    tgapi.Button(k, "✍️ قیمت: 1.16358", "w:price")
+    tgapi.Row(k)
+    tgapi.Button(k, "چارت: " + texts.ChartLabel(types.CHART_HEIKIN_ASHI), "w:chart")
+    tgapi.Button(k, "❓ راهنما", "w:info")
+
+    mut o := types.Order {}
+    o.id = "SALAM"
+    o.symbol = "EURUSD_otc"
+    o.direction = types.CALL
+    o.trigger_price = 1.16358
+    o.amount = 5.0
+    o.status = types.ST_PENDING
+
+    text := "🧪 <b>تست نسخهٔ سلام</b>\n\n" + texts.RenderOrder(o, c.timezone_offset, false) +
+        "\n\nمدت: " + timex.FormatDurationFa(5400 as i64)
+    id := tgapi.Send(b, chat_id, text, tgapi.KeyboardJson(k))
+    println "sendMessage with an inline keyboard: message_id " + str.FromInt(id)
+    if id == 0: ret end
+
+    time.Sleep(1200)
+    edited := tgapi.Edit(b, chat_id, id, text + "\n\n✅ ویرایش هم کار می‌کند.", tgapi.KeyboardJson(k))
+    println "editMessageText: " + (edited ? "ok" : "failed")
+
+    time.Sleep(1200)
+    tgapi.Delete(b, chat_id, id)
+    println "deleteMessage: sent (the chat is left clean)"
+end

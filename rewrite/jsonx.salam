@@ -1,0 +1,137 @@
+// The little bit of JSON the stdlib's object reader does not cover: broker
+// frames arrive as arrays of arrays, and every value in them is defensive
+// territory. Nothing here throws; a value that is not what it should be
+// reads as zero or "".
+package jsonx
+
+import str
+import encoding.json
+
+func IsSpace(c: str): bool:
+    ret c == " " || c == "\n" || c == "\r" || c == "\t"
+end
+
+// The elements of a top-level JSON array, each still raw JSON.
+//
+// Scans bytes rather than parsing: strings and nested {}/[] are skipped
+// over, so a comma inside them is never mistaken for a separator.
+pub func SplitArray(raw: str): Vector<str>:
+    mut out := Vector {} as Vector<str>
+    text := str.Trim(raw)
+    if text.len() < 2: ret out end
+    if text.substr(0, 1) != "[": ret out end
+
+    mut depth := 0
+    mut in_string := false
+    mut escaped := false
+    mut start := 1
+    mut i := 1
+    n := text.len() - 1
+
+    while i < n:
+        c := text.substr(i, 1)
+        if escaped:
+            escaped = false
+        else in_string:
+            if c == "\\": escaped = true
+            else c == "\"": in_string = false
+            end
+        else c == "\"":
+            in_string = true
+        else c == "[" || c == "{":
+            depth = depth + 1
+        else c == "]" || c == "}":
+            depth = depth - 1
+        else c == "," && depth == 0:
+            out.push(str.Trim(text.substr(start, i - start)))
+            start = i + 1
+        end
+        i = i + 1
+    end
+
+    tail := str.Trim(text.substr(start, n - start))
+    if tail.len() > 0: out.push(tail) end
+    ret out
+end
+
+// One element of a JSON array, or "" when the index is past its end.
+pub func ElementAt(raw: str, index: int): str:
+    mut items := SplitArray(raw)
+    defer items.free()
+    if index < 0 || index >= items.len(): ret "" end
+    ret items.get(index)
+end
+
+// A JSON string value without its quotes and escapes.
+pub func Unquote(raw: str): str:
+    text := str.Trim(raw)
+    if text.len() < 2: ret text end
+    if text.substr(0, 1) != "\"": ret text end
+
+    mut out := ""
+    mut i := 1
+    last := text.len() - 1
+    while i < last:
+        c := text.substr(i, 1)
+        if c == "\\" && i + 1 < last:
+            nxt := text.substr(i + 1, 1)
+            if nxt == "n": out = out + "\n"
+            else nxt == "t": out = out + "\t"
+            else nxt == "r": out = out + "\r"
+            else: out = out + nxt
+            end
+            i = i + 2
+        else:
+            out = out + c
+            i = i + 1
+        end
+    end
+    ret out
+end
+
+// A number out of a raw JSON value. Anything unreadable, null included,
+// reads as 0 - callers that care use a separate "present" flag.
+pub func AsFloat(raw: str): f64:
+    text := str.Trim(raw)
+    if text.len() == 0 || text == "null": ret 0.0 end
+    if text.substr(0, 1) == "\"": ret str.ToFloat(Unquote(text)) end
+    ret str.ToFloat(text)
+end
+
+pub func AsInt(raw: str): i64:
+    ret AsFloat(raw) as i64
+end
+
+pub func AsBool(raw: str): bool:
+    ret str.Trim(raw) == "true"
+end
+
+pub func IsNull(raw: str): bool:
+    t := str.Trim(raw)
+    ret t.len() == 0 || t == "null"
+end
+
+// A field of a JSON object, as text with the quotes taken off.
+pub func Field(obj: str, key: str): str:
+    ret str.Trim(json.Get(obj, key))
+end
+
+pub func FieldFloat(obj: str, key: str): f64:
+    ret AsFloat(json.Get(obj, key))
+end
+
+pub func FieldInt(obj: str, key: str): i64:
+    ret AsInt(json.Get(obj, key))
+end
+
+pub func FieldBool(obj: str, key: str): bool:
+    ret AsBool(json.Get(obj, key))
+end
+
+// The first field of `keys` the object actually has, for brokers that
+// renamed one between releases (closeTimestamp vs closeTime).
+pub func FieldAny(obj: str, key_a: str, key_b: str): str:
+    v := Field(obj, key_a)
+    if v.len() > 0: ret v end
+    ret Field(obj, key_b)
+end
