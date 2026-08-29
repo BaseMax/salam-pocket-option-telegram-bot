@@ -7,7 +7,6 @@ import str
 const OTC_SUFFIX := "_otc"
 pub const MAX_SUGGESTIONS := 5
 
-// One tradable asset as the broker lists it.
 @en "Asset"
 @fa "دارایی"
 pub struct Asset:

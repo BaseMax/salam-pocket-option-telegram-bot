@@ -59,7 +59,6 @@ func Allowed(chat_id: i64): bool:
     ret false
 end
 
-// Everyone who should hear a service-wide notice.
 func Recipients(): Vector<i64>:
     mut out := Vector {} as Vector<i64>
     mut list := Admins()
@@ -143,7 +142,6 @@ func BalanceSuffix(text: str, mode: str): str:
     ret texts.WithBalance(text, balance, true)
 end
 
-// A draft seeded with the user's stored defaults.
 func FreshDraft(): wizard.Draft:
     mut d := wizard.Draft {}
     d.direction = types.CALL
@@ -824,7 +822,6 @@ pub func Dispatch(u: bot.Update):
     end
 end
 
-// The text one engine event turns into.
 pub func EventText(e: engine.Event): str:
     o := e.order
     head := texts.Headline(o)
@@ -924,7 +921,6 @@ pub func Configure(c: config.Config):
     _config = c
 end
 
-// Turns whatever the engine reported into messages.
 pub func Notify():
     while true:
         e := engine.TakeEvent()

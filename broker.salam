@@ -23,7 +23,6 @@ import timex "timex.salam"
 import config "config.salam"
 import ssid "ssid.salam"
 
-// Outgoing event names.
 const OUT_AUTH := "auth"
 const OUT_USER_INIT := "user_init"
 const OUT_PLAYER_STATE := "ps"
@@ -32,7 +31,6 @@ const OUT_UNSUBSCRIBE := "unsubfor"
 const OUT_CHANGE_SYMBOL := "changeSymbol"
 const OUT_OPEN_ORDER := "openOrder"
 
-// Incoming event names.
 const IN_SID := "sid"
 const IN_SUCCESS_AUTH := "successauth"
 const IN_AUTH_SUCCESS := "auth/success"
@@ -67,8 +65,6 @@ const AUTH_DROP_WINDOW := 3.0
 const AUTH_SILENCE := 12.0
 const SILENT_ATTEMPTS_BEFORE_GIVING_UP := 3 as i64
 
-// State this package keeps for the life of the process. The sockets are
-// held by index, so a session can be updated in place while it is pumped.
 mut _sessions := Vector {} as Vector<Session>
 mut _deals := Vector {} as Vector<Deal>
 mut _demo_assets := Vector {} as Vector<symbols.Asset>
@@ -79,7 +75,6 @@ mut _offset_default := 7200 as i64
 mut _request_counter := 0 as i64
 mut _verbose := false
 
-// A trade the broker has closed and paid out.
 @en "Deal"
 @fa "معامله"
 pub struct Deal:
@@ -91,7 +86,6 @@ pub struct Deal:
     pub close_time: f64 = 0.0
 end
 
-// The broker's answer to an order we sent.
 @en "Ack"
 @fa "تاییدیه"
 pub struct Ack:
@@ -202,7 +196,6 @@ func SendSubscribe(s: Session):
         `{"asset":"` + s.symbol + `","period":` + str.FromInt(s.timeframe) + `}`)
 end
 
-// The broker's own clock, learned from a timestamp it sent us.
 func LearnOffset(s &: Session, broker_time: f64):
     if broker_time <= 0.0: ret end
     raw := broker_time - timex.NowSeconds()
@@ -531,7 +524,6 @@ func OpenSocket(s &: Session):
     end
 end
 
-// Turns the broker chatter into log lines. Off by default.
 pub func SetVerbose(enabled: bool):
     _verbose = enabled
 end
@@ -540,7 +532,6 @@ pub func SetDefaultOffset(seconds: i64):
     _offset_default = seconds
 end
 
-// Stores the credentials one account will connect with.
 pub func SetCredentials(mode: str, auth: ssid.Auth):
     mut c := Creds {}
     c.frame = auth.frame
@@ -567,7 +558,6 @@ pub func Find(mode: str, symbol: str): int:
     ret 0 - 1
 end
 
-// Whether a slot still holds a socket, for callers that walk the table.
 pub func IsLive(index: int): bool:
     if index < 0 || index >= _sessions.len(): ret false end
     ret _sessions.get(index).p != null
@@ -633,7 +623,6 @@ pub func Count(): int:
     ret _sessions.len()
 end
 
-// Makes sure the socket is following the timeframe this order needs.
 pub func EnsureTimeframe(index: int, timeframe: i64):
     if index < 0 || index >= _sessions.len(): ret end
     mut s := _sessions.get(index)
@@ -676,7 +665,6 @@ pub func Pump(wait_ms: int, max_gap: i64):
     end
 end
 
-// Closes sockets nothing has needed for `idle_ttl` seconds.
 pub func CloseIdle(idle_ttl: i64):
     now := timex.NowSeconds()
     mut i := 0

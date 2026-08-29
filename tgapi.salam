@@ -41,7 +41,6 @@ pub func NewKeyboard(): Keyboard:
     ret Keyboard {}
 end
 
-// Adds a button to the row being built.
 pub func Button(k &: Keyboard, label: str, data: str):
     if k.current.len() > 0: k.current = k.current + "," end
     k.current = k.current + `{"text":"` + json.Escape(label) + `","callback_data":"` + json.Escape(data) + `"}`

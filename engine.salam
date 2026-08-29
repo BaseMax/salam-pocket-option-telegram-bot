@@ -36,7 +36,6 @@ mut _events := Vector {} as Vector<Event>
 mut _config := config.Config {}
 mut _started := false
 
-// One order the engine is following, and the socket it listens on.
 struct Attachment:
     pub order_id: str = ""
     pub session: int = 0
@@ -65,7 +64,6 @@ func Publish(kind: str, order: types.Order, price: f64, entry_at: f64, detail: s
     _events.push(e)
 end
 
-
 func FindAttachment(order_id: str): int:
     mut i := 0
     while i < _attachments.len():
@@ -75,7 +73,6 @@ func FindAttachment(order_id: str): int:
     ret 0 - 1
 end
 
-
 func Detach(order_id: str):
     idx := FindAttachment(order_id)
     if idx < 0: ret end
@@ -83,7 +80,6 @@ func Detach(order_id: str):
     broker.Release(a.session)
     _attachments.remove_at(idx)
 end
-
 
 func Attach(o: types.Order):
     if FindAttachment(o.id) >= 0: ret end
@@ -103,7 +99,6 @@ func Attach(o: types.Order):
     a.session = session
     _attachments.push(a)
 end
-
 
 /*
  * One order's second: expire it if its validity ran out, enter it if the
@@ -152,8 +147,6 @@ func Finish(o: types.Order, status: str, note: str, kind: str, price: f64, detai
     Publish(kind, done, price, 0.0, detail)
 end
 
-
-// Sends the trade and records what came back.
 func Place(o: types.Order, entry_time: f64):
     idx := FindAttachment(o.id)
     if idx < 0:
@@ -200,7 +193,6 @@ func Place(o: types.Order, entry_time: f64):
     Publish(EV_OPENED, open, retried.open_price, 0.0, "")
 end
 
-
 // The price arrived. Enter now, or arm the order for the next candle.
 func Triggered(o: types.Order, price: f64, tick_time: f64, offset: i64):
     if o.trigger_mode == types.TRIGGER_NEXT_CANDLE:
@@ -222,7 +214,6 @@ func Triggered(o: types.Order, price: f64, tick_time: f64, offset: i64):
     Publish(EV_TRIGGERED, placing, price, 0.0, "")
     Place(placing, tick_time)
 end
-
 
 // An armed order enters at the top of the next candle - unless the stream
 // was down when that candle opened, or the candle has already gone by.
@@ -250,7 +241,6 @@ func MaybeEnterOnNewCandle(o: types.Order, tick_time: f64, price: f64, offset: i
     Publish(EV_TRIGGERED, placing, price, 0.0, "")
     Place(placing, tick_time)
 end
-
 
 func StepOrder(index: int):
     a := _attachments.get(index)
@@ -290,8 +280,6 @@ func StepOrder(index: int):
     end
 end
 
-
-// Matches a settled trade to the order that opened it.
 func ApplyDeal(d: broker.Deal):
     o := store.FindByDealId(d.deal_id)
     if o.id.len() == 0 || o.closed_at > 0.0: ret end
@@ -316,7 +304,6 @@ func ApplyDeal(d: broker.Deal):
     Detach(done.id)
     Publish(EV_SETTLED, done, 0.0, 0.0, "")
 end
-
 
 // Reports a session whose credentials the broker rejected, once.
 func CheckAuth():
@@ -345,15 +332,12 @@ pub func ResolveApproachSide(trigger_price: f64, reference_price: f64, has_refer
     ret types.SIDE_ANY
 end
 
-// True when the segment between two prices contains the target, whichever
-// direction it moved in.
 pub func Crossed(previous: f64, current: f64, target: f64): bool:
     if previous <= target && current >= target: ret true end
     if previous >= target && current <= target: ret true end
     ret false
 end
 
-// Whether this tick counts as the touch the order was waiting for.
 pub func IsTouched(o: types.Order, prior_price: f64, has_prior: bool, price: f64): bool:
     if o.approach_side == types.SIDE_BELOW: ret price >= o.trigger_price end
     if o.approach_side == types.SIDE_ABOVE: ret price <= o.trigger_price end
@@ -445,7 +429,6 @@ pub func Price(mode: str, symbol: str, wait_ms: i64): f64:
     ret price
 end
 
-// The account balance, asking the broker if we have not been told lately.
 pub func Balance(mode: str, wait_ms: i64): f64:
     idx := broker.Acquire(mode, "", 0 as i64)
     broker.RefreshBalance(idx)

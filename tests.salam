@@ -1,6 +1,5 @@
-// The same properties the TypeScript suite pins, checked against the Salam
-// port: durations, symbols, the one-line command, the trading rules, and a
-// round trip through SQLite.
+// Durations, symbols, the command parser, the trading rules, the store,
+// the settings, every notification, and the polling bookkeeping.
 package main
 
 import os
@@ -313,7 +312,6 @@ func TestCopy():
     Has(texts.ChartGuide(), "هایکن‌آشی", "the chart guide explains heikin-ashi")
     Has(texts.TimeGuide(), "۳۰ دقیقه", "the time guide shows a Persian example")
 end
-
 
 func TestBigNumbers():
     // Telegram ids outgrew 32 bits years ago, and a supergroup id is around

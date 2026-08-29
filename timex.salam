@@ -97,11 +97,9 @@ pub func ParseDuration(raw: str): i64:
     n := text.len()
 
     while i < n:
-        // skip whitespace
         while i < n && text.substr(i, 1) == " ": i = i + 1 end
         if i >= n: break end
 
-        // the number
         start := i
         mut dots := 0
         while i < n:
@@ -118,7 +116,6 @@ pub func ParseDuration(raw: str): i64:
         if i == start: ret INVALID end
         value := str.ToFloat(text.substr(start, i - start))
 
-        // an optional space, then the unit word
         while i < n && text.substr(i, 1) == " ": i = i + 1 end
         wstart := i
         while i < n:

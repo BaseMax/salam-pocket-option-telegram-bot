@@ -1,5 +1,5 @@
 // The vocabulary the whole bot speaks: one order, its states, and the
-// account it belongs to. Mirrors src/types.ts of the TypeScript version.
+// account it belongs to.
 package types
 
 // Account: which broker cluster an order lives on. Demo and real are
@@ -7,7 +7,6 @@ package types
 pub const MODE_DEMO := "demo"
 pub const MODE_REAL := "real"
 
-// Direction of the trade.
 pub const CALL := "call"
 pub const PUT := "put"
 
@@ -31,7 +30,8 @@ pub const SIDE_ABOVE := "above"
 pub const SIDE_BELOW := "below"
 pub const SIDE_ANY := "any"
 
-// The order's life. Everything before OPEN can still be called off.
+// The order's life. Only pending and armed can still be called off: once
+// it is being sent, the broker may already have taken it.
 pub const ST_PENDING := "pending"
 pub const ST_ARMED := "armed"
 pub const ST_PLACING := "placing"

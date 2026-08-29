@@ -23,7 +23,6 @@ pub const REPLACED_NOTE := "⌛️ این پنل باطل شد چون پنل ت�
 
 mut _drafts := Vector {} as Vector<Draft>
 
-// One chat's half-built order, plus where its panel and prompt live.
 @en "Draft"
 @fa "پیش‌نویس"
 pub struct Draft:
@@ -137,8 +136,6 @@ func ValidText(d: Draft): str:
     ret timex.FormatDurationFa(d.valid_for_seconds)
 end
 
-// The panel body: the order as it stands, then whatever the panel is
-// currently asking of the user.
 func RenderPanel(d: Draft, final: bool): str:
     mut out := "🧾 <b>ساخت سفارش جدید</b>\n\n"
     out = out + "نماد: <b>" + SymbolText(d) + "</b>\n"
@@ -604,7 +601,6 @@ pub func HandleText(b: bot.Bot, chat_id: i64, text: str, message_id: i64): bool:
     ret true
 end
 
-// The order a finished panel describes.
 pub func Spec(chat_id: i64): types.OrderSpec:
     mut spec := types.OrderSpec {}
     idx := Find(chat_id)
