@@ -78,7 +78,15 @@ func main:
     end
     Check(saw_failure, "the interrupted order is announced exactly once")
 
+    println "reloading credentials while orders are live (what /session does)"
+    engine.ReloadCredentials(types.MODE_DEMO)
+    Check(engine.ActiveCount() == 2, "the account's orders are followed again on the new session")
+    Check(store.Get(pending.id).status == types.ST_PENDING, "and none of them changed state")
+    engine.ReloadCredentials(types.MODE_REAL)
+    Check(engine.ActiveCount() == 2, "reloading the other account leaves these alone")
+
     engine.Stop()
+    Check(engine.ActiveCount() == 0, "stopping releases every session")
     store.Close()
 
     println "checking the same database opens again"
