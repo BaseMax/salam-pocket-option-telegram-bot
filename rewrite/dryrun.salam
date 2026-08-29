@@ -3,6 +3,7 @@
 // updates from another instance of the bot that is already polling.
 package main
 
+import parse "parse.salam"
 import str
 import time
 import telegram.bot
@@ -51,7 +52,7 @@ func main:
     engine.Start(c)
 
     ids := str.Split(c.admin_ids, ",")
-    chat_id := str.ToInt(str.Trim(ids.get(0))) as i64
+    chat_id := parse.ParseInt64(ids.get(0))
     println "driving a conversation in chat " + str.FromInt(chat_id)
 
     println "→ /start"

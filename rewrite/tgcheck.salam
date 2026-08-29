@@ -3,6 +3,7 @@
 // and no getUpdates call can clash with another running instance.
 package main
 
+import parse "parse.salam"
 import str
 import time
 import telegram.bot
@@ -32,7 +33,7 @@ func main:
         println "no TELEGRAM_ADMIN_IDS to message"
         ret
     end
-    chat_id := str.ToInt(str.Trim(ids.get(0))) as i64
+    chat_id := parse.ParseInt64(ids.get(0))
 
     mut k := tgapi.NewKeyboard()
     tgapi.Button(k, "✍️ نماد: EURUSD_otc", "w:symbol")

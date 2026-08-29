@@ -56,6 +56,44 @@ pub func IsNumber(value: f64): bool:
     ret value != NOT_A_NUMBER
 end
 
+/*
+ * A whole number, in 64 bits.
+ *
+ * `str.ToInt` is 32 bits wide, which is narrower than the world it is asked
+ * about here: a Telegram chat id passed 2^31 years ago, a supergroup id is
+ * around -10^12, and a millisecond timestamp is 13 digits. Anything wider
+ * than an i32 came back truncated and wrong, so this reads the digits
+ * itself.
+ */
+pub func ParseInt64(raw: str): i64:
+    text := str.Trim(str.ToEnglishDigits(raw))
+    if text.len() == 0: ret 0 as i64 end
+
+    mut i := 0
+    mut negative := false
+    first := text.substr(0, 1)
+    if first == "-":
+        negative = true
+        i = 1
+    else first == "+":
+        i = 1
+    end
+
+    mut value := 0 as i64
+    mut digits := 0
+    while i < text.len():
+        c := text.substr(i, 1)
+        if c < "0" || c > "9": break end
+        value = value * 10 as i64 + (str.ToInt(c) as i64)
+        digits = digits + 1
+        i = i + 1
+    end
+
+    if digits == 0: ret 0 as i64 end
+    if negative: ret 0 as i64 - value end
+    ret value
+end
+
 // buy / خرید / call / up …
 pub func Direction(raw: str): str:
     w := NormalizeWord(raw)

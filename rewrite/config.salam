@@ -1,6 +1,7 @@
 // Everything the process reads from its environment, once, at startup.
 package config
 
+import parse "parse.salam"
 import os
 import str
 import timex "timex.salam"
@@ -47,7 +48,7 @@ end
 func EnvInt(name: str, fallback: i64): i64:
     v := str.Trim(os.Env(name))
     if v.len() == 0: ret fallback end
-    ret str.ToInt(v) as i64
+    ret parse.ParseInt64(v)
 end
 
 func EnvFloat(name: str, fallback: f64): f64:

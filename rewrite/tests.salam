@@ -315,6 +315,20 @@ func TestCopy():
 end
 
 
+func TestBigNumbers():
+    // Telegram ids outgrew 32 bits years ago, and a supergroup id is around
+    // -10^12. str.ToInt is 32 bits wide, so these must not go through it.
+    EqInt(parse.ParseInt64("169298261"), 169298261, "an ordinary chat id")
+    EqInt(parse.ParseInt64("5123456789"), 5123456789, "a modern user id, past 2^31")
+    EqInt(parse.ParseInt64("-1001234567890"), 0 - 1001234567890, "a supergroup id")
+    EqInt(parse.ParseInt64("1787971152596"), 1787971152596, "a millisecond timestamp")
+    EqInt(parse.ParseInt64(" 42 "), 42, "spaces are trimmed")
+    EqInt(parse.ParseInt64("۳۴۴۱۷۵۲۴"), 34417524, "Persian digits")
+    EqInt(parse.ParseInt64(""), 0, "empty reads as zero")
+    EqInt(parse.ParseInt64("abc"), 0, "so does nonsense")
+    EqInt(parse.ParseInt64("12abc"), 12, "and a number stops at the first non-digit")
+end
+
 func TestSettings():
     Truthy(store.Open(":memory:"), "a database for the settings")
     mut c := config.Config {}
@@ -434,6 +448,7 @@ func main:
     TestLimits()
     TestStore()
     TestCopy()
+    TestBigNumbers()
     TestSettings()
     TestNotifications()
     os.Exit(testing.Summary())

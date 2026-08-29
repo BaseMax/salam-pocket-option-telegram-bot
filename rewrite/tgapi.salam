@@ -5,6 +5,7 @@
 // is the same transport with nothing hidden.
 package tgapi
 
+import parse "parse.salam"
 import str
 import telegram.bot
 import encoding.json
@@ -77,7 +78,7 @@ pub func Send(b: bot.Bot, chat_id: i64, text: str, markup: str): i64:
 
     resp := bot.Call(b, "sendMessage", p)
     if !resp.ok: ret 0 as i64 end
-    ret str.ToInt(json.Get(resp.result, "message_id")) as i64
+    ret parse.ParseInt64(json.Get(resp.result, "message_id"))
 end
 
 pub func SendPlain(b: bot.Bot, chat_id: i64, text: str): i64:

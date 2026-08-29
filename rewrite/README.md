@@ -77,6 +77,10 @@ traffic leave RSS flat at 2 MB and the CPU at 0%, and one $1 trade went
 
 ## Differences from the TypeScript version
 
+- **Telegram ids do not fit in 32 bits.** `str.ToInt` is `i32`, which
+  silently truncates a modern user id (past 2^31), any supergroup id
+  (around -10^12) and every millisecond timestamp. `parse.ParseInt64` reads
+  the digits itself, and every id, uid and timestamp goes through it.
 - **A refused session is silent.** Pocket Option does not answer a dead token
   with `NotAuthorized`: it accepts the socket, sends the public asset list,
   and then drops the connection - or says nothing at all. `broker.salam`

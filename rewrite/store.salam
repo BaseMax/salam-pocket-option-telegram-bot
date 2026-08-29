@@ -2,6 +2,7 @@
 // the engine re-reads it on boot, so a restart loses nothing.
 package store
 
+import parse "parse.salam"
 import str
 import conv
 import rand
@@ -319,7 +320,7 @@ end
 pub func GetSettingInt(key: str, fallback: i64): i64:
     v := GetSetting(key, "")
     if v.len() == 0: ret fallback end
-    ret str.ToInt(v) as i64
+    ret parse.ParseInt64(v)
 end
 
 pub func GetSettingFloat(key: str, fallback: f64): f64:

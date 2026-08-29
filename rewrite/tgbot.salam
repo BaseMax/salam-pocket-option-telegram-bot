@@ -67,7 +67,7 @@ func Recipients(): Vector<i64>:
     mut i := 0
     while i < list.len():
         entry := str.Trim(list.get(i))
-        if entry.len() > 0: out.push(str.ToInt(entry) as i64) end
+        if entry.len() > 0: out.push(parse.ParseInt64(entry)) end
         i = i + 1
     end
 
@@ -77,7 +77,7 @@ func Recipients(): Vector<i64>:
         defer parts.free()
         mut k := 0
         while k < parts.len():
-            id := str.ToInt(str.Trim(parts.get(k))) as i64
+            id := parse.ParseInt64(parts.get(k))
             mut seen := false
             mut j := 0
             while j < out.len():
