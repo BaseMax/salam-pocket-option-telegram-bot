@@ -53,6 +53,19 @@ const IN_HISTORY_PERIOD := "loadHistoryPeriod"
 const OFFSET_QUANTUM := 900 as i64
 const PLAYER_STATE_INTERVAL := 30.0
 
+/*
+ * How a rejected session actually looks.
+ *
+ * The broker does not answer a dead token with NotAuthorized: it accepts the
+ * socket, sends the public asset list, and then closes the connection a
+ * moment later - or says nothing at all. Both have to be read as a refusal,
+ * or the bot reconnects forever while the user waits for news that never
+ * comes.
+ */
+const AUTH_DROP_WINDOW := 3.0
+const AUTH_SILENCE := 12.0
+const SILENT_ATTEMPTS_BEFORE_GIVING_UP := 3 as i64
+
 // State this package keeps for the life of the process. The sockets are
 // held by index, so a session can be updated in place while it is pumped.
 mut _sessions := Vector {} as Vector<Session>
@@ -102,6 +115,7 @@ pub struct Session:
     pub auth_failed: bool = false
     pub auth_error: str = ""
     pub auth_sent_at: f64 = 0.0
+    pub auth_timeouts: i64 = 0
     pub was_ready: bool = false
 
     pub holders: i64 = 0
@@ -297,6 +311,7 @@ func HandleEvent(index: int, name: str, payload: str, max_gap: i64):
         s.ready = false
         s.auth_error = "کارگزار این نشست را نپذیرفت (" + name + ")."
         _sessions.set(index, s)
+        socketio.Disconnect(ClientOf(s))
         ret
     end
 
@@ -428,6 +443,12 @@ func PumpOne(index: int, wait_ms: int, max_gap: i64):
             mut fresh := _sessions.get(index)
             fresh.ready = false
             fresh.lost_data = true
+            // Closed within moments of the auth frame, having never once
+            // authenticated: that is what a refused session looks like.
+            if !fresh.was_ready && fresh.auth_sent_at > 0.0 && timex.NowSeconds() - fresh.auth_sent_at < AUTH_DROP_WINDOW:
+                fresh.auth_failed = true
+                fresh.auth_error = "کارگزار بلافاصله بعد از احراز هویت اتصال را بست؛ این نشست نامعتبر یا منقضی است."
+            end
             _sessions.set(index, fresh)
             Log(fresh.mode + "/" + fresh.symbol + " disconnected: " + ev.message)
         else ev.kind == socketio.EV_EVENT:
@@ -444,9 +465,23 @@ func PumpOne(index: int, wait_ms: int, max_gap: i64):
         budget = budget - 1
     end
 
-    // Keep the balance fresh; the broker only volunteers it when asked.
     mut after := _sessions.get(index)
     now := timex.NowSeconds()
+
+    // The other refusal: the auth frame is swallowed and nothing comes back.
+    if !after.ready && !after.auth_failed && after.auth_sent_at > 0.0 && now - after.auth_sent_at > AUTH_SILENCE:
+        after.auth_timeouts = after.auth_timeouts + 1 as i64
+        after.auth_sent_at = now
+        mut allowed := 1 as i64
+        if after.was_ready: allowed = SILENT_ATTEMPTS_BEFORE_GIVING_UP end
+        if after.auth_timeouts >= allowed:
+            after.auth_failed = true
+            after.auth_error = "کارگزار به فریم احراز هویت پاسخی نداد؛ این نشست تقریباً حتماً منقضی شده است. یک SSID تازه از تبی که همین حالا لاگین است بردارید."
+        end
+        _sessions.set(index, after)
+    end
+
+    // Keep the balance fresh; the broker only volunteers it when asked.
     if after.ready && now - after.last_player_state > PLAYER_STATE_INTERVAL:
         after.last_player_state = now
         _sessions.set(index, after)
@@ -587,7 +622,13 @@ end
  */
 pub func Pump(wait_ms: int, max_gap: i64):
     count := _sessions.len()
-    if count == 0: ret end
+    if count == 0:
+        // Nothing to read: wait the turn out rather than handing the caller
+        // an instant return, which would spin its loop at full speed for as
+        // long as the bot has no orders.
+        if wait_ms > 0: time.Sleep(wait_ms) end
+        ret
+    end
 
     mut share := wait_ms / count
     if share < 5: share = 5 end

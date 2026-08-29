@@ -1,0 +1,101 @@
+// What a restart does to orders that were live when the process died.
+package main
+
+import str
+import config "config.salam"
+import store "store.salam"
+import engine "engine.salam"
+import tgbot "tgbot.salam"
+import types "types.salam"
+
+mut failures := 0
+
+func Check(condition: bool, message: str):
+    if condition:
+        println "  ok   " + message
+    else:
+        println "  FAIL " + message
+        failures = failures + 1
+    end
+end
+
+func Seed(status: str, symbol: str): types.Order:
+    mut o := types.Order {}
+    o.chat_id = 7 as i64
+    o.account_mode = types.MODE_DEMO
+    o.symbol = symbol
+    o.direction = types.CALL
+    o.trigger_price = 1.5
+    o.amount = 1.0
+    o.duration_seconds = 60 as i64
+    o.timeframe_seconds = 60 as i64
+    saved := store.Create(o)
+
+    mut row := saved
+    row.status = status
+    store.Save(row)
+    ret row
+end
+
+func main:
+    path := "/tmp/salam-recovery.sqlite"
+
+    if !store.Open(path):
+        println "could not open the database"
+        ret
+    end
+
+    mut c := config.Load()
+    c.token = ""
+    println "seeding a database as if the process had died mid-flight"
+    pending := Seed(types.ST_PENDING, "EURUSD_otc")
+    placing := Seed(types.ST_PLACING, "GBPUSD_otc")
+    armed := Seed(types.ST_ARMED, "AUDCAD_otc")
+    println "  pending=" + pending.id + " placing=" + placing.id + " armed=" + armed.id
+
+    // No credentials are configured here, so Start attaches without opening
+    // a socket: this is about what the database says afterwards.
+    println "restarting the engine"
+    engine.Start(c)
+
+    after_placing := store.Get(placing.id)
+    Check(after_placing.status == types.ST_FAILED, "an order that was mid-flight is failed, never retried")
+    Check(str.Contains(after_placing.note, "restarted"), "and its note says why")
+
+    Check(store.Get(pending.id).status == types.ST_PENDING, "a pending order stays pending")
+    Check(store.Get(armed.id).status == types.ST_ARMED, "an armed order stays armed")
+    Check(engine.ActiveCount() == 2, "both are followed again, the failed one is not")
+
+    mut saw_failure := false
+    while true:
+        e := engine.TakeEvent()
+        if e.kind.len() == 0: break end
+        if e.kind == engine.EV_FAILED && e.order.id == placing.id:
+            saw_failure = true
+            text := tgbot.EventText(e)
+            Check(str.Contains(text, placing.id), "the chat is told, naming the order")
+        end
+    end
+    Check(saw_failure, "the interrupted order is announced exactly once")
+
+    engine.Stop()
+    store.Close()
+
+    println "checking the same database opens again"
+    if !store.Open(path):
+        println "  FAIL could not reopen"
+        failures = failures + 1
+    else:
+        mut active := store.ListActive()
+        Check(active.len() == 2, "and still holds the two live orders")
+        active.free()
+        store.Close()
+    end
+
+    println "---"
+    if failures == 0:
+        println "recovery: all checks passed"
+    else:
+        println "recovery: " + str.FromInt(failures as i64) + " failed"
+    end
+end

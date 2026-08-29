@@ -68,6 +68,8 @@ func main:
 
     println "[main] starting Telegram long polling"
     while true:
+        turn_started := time.NowMillis()
+
         // The broker first: a tick that has arrived should be acted on
         // before anything else in this turn.
         engine.Step(PUMP_MS)
@@ -89,5 +91,11 @@ func main:
             last_beat = now
             WriteHeartbeat(c.heartbeat_path)
         end
+
+        // A turn that finished early waits out the rest of its budget. Without
+        // this the loop spins at full speed whenever nothing is connected -
+        // no orders, no sockets, nothing to block on.
+        elapsed := (time.NowMillis() - turn_started) as int
+        if elapsed < PUMP_MS: time.Sleep(PUMP_MS - elapsed) end
     end
 end

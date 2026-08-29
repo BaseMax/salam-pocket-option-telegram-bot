@@ -16,6 +16,9 @@ import jsonx "jsonx.salam"
 import ssid "ssid.salam"
 import texts "texts.salam"
 import config "config.salam"
+import settings "settings.salam"
+import tgbot "tgbot.salam"
+import engine_events "engine.salam"
 
 // The stdlib's assertions take no message; these keep one, because a
 // failing line should say what property it was checking.
@@ -311,6 +314,114 @@ func TestCopy():
     Has(texts.TimeGuide(), "۳۰ دقیقه", "the time guide shows a Persian example")
 end
 
+
+func TestSettings():
+    Truthy(store.Open(":memory:"), "a database for the settings")
+    mut c := config.Config {}
+    c.default_amount = 2.0
+    c.default_timeframe = 60 as i64
+    c.demo_ssid = "seeded-from-env"
+    settings.Init(c)
+
+    EqFloat(settings.Amount(), 2.0, "an unset default comes from the environment")
+    settings.SetAmount(7.5)
+    EqFloat(settings.Amount(), 7.5, "and a stored one wins")
+
+    EqStr(settings.Mode(), types.MODE_DEMO, "demo unless told otherwise")
+    settings.SetMode(types.MODE_REAL)
+    EqStr(settings.Mode(), types.MODE_REAL, "the account switch persists")
+
+    Truthy(settings.NotifyBalance(), "balance notices are on by default")
+    settings.SetNotifyBalance("off")
+    Falsy(settings.NotifyBalance(), "and can be turned off")
+
+    Falsy(settings.IsOwner(42 as i64), "a stranger is not an owner")
+    settings.AddOwner(42 as i64)
+    Truthy(settings.IsOwner(42 as i64), "the first chat claims the bot")
+    settings.AddOwner(42 as i64)
+    EqStr(settings.Owners(), "42", "claiming twice does not duplicate")
+    settings.AddOwner(43 as i64)
+    Truthy(settings.IsOwner(43 as i64), "a second owner is added")
+    Truthy(settings.IsOwner(42 as i64), "without losing the first")
+
+    EqStr(settings.Ssid(types.MODE_DEMO), "seeded-from-env", "the env seeds a session")
+    settings.SetCredentials(types.MODE_DEMO, "pasted-by-user", 99 as i64)
+    EqStr(settings.Ssid(types.MODE_DEMO), "pasted-by-user", "and /session overrides it")
+    EqInt(settings.Uid(types.MODE_DEMO), 99, "with its uid")
+    Falsy(settings.HasCredentials(types.MODE_REAL), "the other account is still empty")
+    store.Close()
+end
+
+func TestNotifications():
+    mut o := types.Order {}
+    o.id = "A7K2"
+    o.symbol = "EURUSD_otc"
+    o.direction = types.CALL
+    o.trigger_price = 1.0854
+    o.open_price = 1.0855
+    o.close_price = 1.0860
+    o.amount = 5.0
+
+    mut armed := engine_events.Event {}
+    armed.kind = engine_events.EV_ARMED
+    armed.order = o
+    armed.price = 1.0854
+    Has(tgbot.EventText(armed), "کندل بعدی", "an armed order says when it will enter")
+    Has(tgbot.EventText(armed), "A7K2", "and names itself")
+
+    mut opened := engine_events.Event {}
+    opened.kind = engine_events.EV_OPENED
+    opened.order = o
+    Has(tgbot.EventText(opened), "معامله باز شد", "an opened trade")
+
+    mut won := engine_events.Event {}
+    won.kind = engine_events.EV_SETTLED
+    mut winner := o
+    winner.status = types.ST_WON
+    winner.profit = 4.2
+    winner.has_profit = true
+    won.order = winner
+    Has(tgbot.EventText(won), "برد", "a win")
+    Has(tgbot.EventText(won), "$4.20", "with its profit")
+
+    mut lost := engine_events.Event {}
+    lost.kind = engine_events.EV_SETTLED
+    mut loser := o
+    loser.status = types.ST_LOST
+    loser.profit = 0.0 - 5.0
+    loser.has_profit = true
+    lost.order = loser
+    Has(tgbot.EventText(lost), "باخت", "a loss")
+    Has(tgbot.EventText(lost), "-$5.00", "with its size")
+
+    mut failed := engine_events.Event {}
+    failed.kind = engine_events.EV_FAILED
+    failed.order = o
+    failed.detail = "bad <input> & more"
+    Has(tgbot.EventText(failed), "bad &lt;input&gt; &amp; more", "a broker error is escaped, not injected")
+
+    mut expired := engine_events.Event {}
+    expired.kind = engine_events.EV_EXPIRED
+    expired.order = o
+    Has(tgbot.EventText(expired), "منقضی شد", "an expiry")
+
+    mut missed := engine_events.Event {}
+    missed.kind = engine_events.EV_MISSED
+    missed.order = o
+    missed.detail = "کندل ورود گذشت"
+    Has(tgbot.EventText(missed), "فرصت از دست رفت", "a missed entry")
+
+    mut late := engine_events.Event {}
+    late.kind = engine_events.EV_SETTLE_LATE
+    late.order = o
+    Has(tgbot.EventText(late), "هنوز نرسیده", "a settlement the broker is late with")
+
+    mut unknown := engine_events.Event {}
+    unknown.kind = "something-new"
+    unknown.order = o
+    EqStr(tgbot.EventText(unknown), "", "an event with no wording says nothing")
+end
+
 func main:
     TestDurations()
     TestFormatting()
@@ -323,5 +434,7 @@ func main:
     TestLimits()
     TestStore()
     TestCopy()
+    TestSettings()
+    TestNotifications()
     os.Exit(testing.Summary())
 end

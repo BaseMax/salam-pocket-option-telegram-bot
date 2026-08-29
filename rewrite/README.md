@@ -60,17 +60,29 @@ services. All of them are demo-account only.
 
 | program | what it proves | touches |
 | --- | --- | --- |
-| `tests` | durations, symbols, the command parser, the trading rules, SQLite | nothing |
+| `tests` | durations, symbols, the command parser, the trading rules, SQLite, settings, every notification | nothing |
+| `recovery` | what a restart does: mid-flight orders fail, live ones are re-attached | nothing |
 | `smoke` | connect, authenticate, asset list, balance, live ticks | broker (read only) |
 | `tgcheck` | getMe, an HTML message with an inline keyboard, edit, delete | Telegram |
 | `dryrun` | a scripted conversation through the real dispatcher | Telegram + broker |
+| `soak` | four minutes of live ticks: memory, CPU, the expiry rule, idle cleanup | broker (read only) |
 | `tradetest` | one $1 demo trade from trigger to settlement | broker (places a trade) |
 
 `dryrun` and `tgcheck` never call `getUpdates`, so they can be run while
 another instance of the bot is polling the same token.
 
+Measured on the live demo account: 153 assertions pass, four minutes of tick
+traffic leave RSS flat at 2 MB and the CPU at 0%, and one $1 trade went
+`triggered → opened → settled` with the broker's own deal id.
+
 ## Differences from the TypeScript version
 
+- **A refused session is silent.** Pocket Option does not answer a dead token
+  with `NotAuthorized`: it accepts the socket, sends the public asset list,
+  and then drops the connection - or says nothing at all. `broker.salam`
+  reads both as a refusal (a disconnect within three seconds of the auth
+  frame having never authenticated, or twelve seconds of silence), so the
+  owner is told to send a fresh SSID instead of the bot reconnecting forever.
 - **Binary frames.** Pocket Option answers with socket.io binary attachments
   (`{"_placeholder":true,"num":0}` plus the bytes). `broker.Payload()` is the
   one place that matters; without it the socket authenticates and then looks

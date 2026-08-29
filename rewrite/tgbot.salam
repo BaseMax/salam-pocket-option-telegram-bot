@@ -746,53 +746,6 @@ func HandleCallback(chat_id: i64, query_id: str, data: str, message_id: i64, mes
     tgapi.Answer(_bot, query_id, "", false)
 end
 
-// The text one engine event turns into.
-func EventText(e: engine.Event): str:
-    o := e.order
-    head := texts.Headline(o)
-
-    if e.kind == engine.EV_ARMED:
-        ret "🎯 <b>قیمت به هدف رسید</b>\n\n" + head + "\nقیمت برخورد: <code>" + timex.FormatPrice(e.price) +
-            "</code>\nورود در ابتدای کندل بعدی، ساعت " + timex.FormatTime(e.entry_at, _config.timezone_offset) + "."
-    end
-    if e.kind == engine.EV_TRIGGERED:
-        ret "🎯 <b>قیمت به هدف رسید، در حال ورود</b>\n\n" + head + "\nقیمت برخورد: <code>" + timex.FormatPrice(e.price) +
-            "</code>\n" + texts.DirectionLong(o.direction) + " · " + texts.TriggerLabel(o.trigger_mode)
-    end
-    if e.kind == engine.EV_OPENED:
-        mut text := "🔵 <b>معامله باز شد</b>\n\n" + texts.RenderOrder(o, _config.timezone_offset, true) +
-            "\nقیمت ورود: <code>" + timex.FormatPrice(o.open_price) + "</code>"
-        if o.closes_at > 0.0:
-            text = text + "\nبسته می‌شود در: " + timex.FormatTime(o.closes_at, _config.timezone_offset)
-        end
-        ret text
-    end
-    if e.kind == engine.EV_SETTLED:
-        mut title := "🟰 <b>مساوی</b>"
-        if o.status == types.ST_WON: title = "✅ <b>برد</b>" end
-        if o.status == types.ST_LOST: title = "🛑 <b>باخت</b>" end
-        ret title + "\n\n" + head + "\nقیمت ورود: <code>" + timex.FormatPrice(o.open_price) +
-            "</code> · قیمت خروج: <code>" + timex.FormatPrice(o.close_price) + "</code>\nسود/زیان: <b>" +
-            timex.FormatMoney(o.profit) + "</b>"
-    end
-    if e.kind == engine.EV_FAILED:
-        ret "⚠️ <b>سفارش ناموفق</b>\n\n" + head + "\n" + texts.EscapeHtml(e.detail)
-    end
-    if e.kind == engine.EV_EXPIRED:
-        ret "⌛️ <b>سفارش منقضی شد</b>\n\n" + head + "\nقیمت تا پایان مهلت به <code>" +
-            timex.FormatPrice(o.trigger_price) + "</code> نرسید."
-    end
-    if e.kind == engine.EV_MISSED:
-        ret "🚫 <b>فرصت از دست رفت، سفارش لغو شد</b>\n\n" + head + "\n" + texts.EscapeHtml(e.detail) +
-            "\nقیمت فعلی: <code>" + timex.FormatPrice(e.price) + "</code>\nبرای ورود با قیمت تازه، سفارش جدید ثبت کنید."
-    end
-    if e.kind == engine.EV_SETTLE_LATE:
-        ret "⏱ <b>نتیجهٔ معامله هنوز نرسیده</b>\n\n" + head +
-            "\nزمان انقضا گذشته اما کارگزار هنوز نتیجه را اعلام نکرده است. پیگیری ادامه دارد."
-    end
-    ret ""
-end
-
 // Starts the bot: credentials into the broker, command menu into Telegram.
 pub func Init(c: config.Config): bool:
     _config = c
@@ -857,6 +810,53 @@ pub func Dispatch(u: bot.Update):
         end
         HandleCallback(chat_id, q.id, q.data, q.message.message_id, q.message.text)
     end
+end
+
+// The text one engine event turns into.
+pub func EventText(e: engine.Event): str:
+    o := e.order
+    head := texts.Headline(o)
+
+    if e.kind == engine.EV_ARMED:
+        ret "🎯 <b>قیمت به هدف رسید</b>\n\n" + head + "\nقیمت برخورد: <code>" + timex.FormatPrice(e.price) +
+            "</code>\nورود در ابتدای کندل بعدی، ساعت " + timex.FormatTime(e.entry_at, _config.timezone_offset) + "."
+    end
+    if e.kind == engine.EV_TRIGGERED:
+        ret "🎯 <b>قیمت به هدف رسید، در حال ورود</b>\n\n" + head + "\nقیمت برخورد: <code>" + timex.FormatPrice(e.price) +
+            "</code>\n" + texts.DirectionLong(o.direction) + " · " + texts.TriggerLabel(o.trigger_mode)
+    end
+    if e.kind == engine.EV_OPENED:
+        mut text := "🔵 <b>معامله باز شد</b>\n\n" + texts.RenderOrder(o, _config.timezone_offset, true) +
+            "\nقیمت ورود: <code>" + timex.FormatPrice(o.open_price) + "</code>"
+        if o.closes_at > 0.0:
+            text = text + "\nبسته می‌شود در: " + timex.FormatTime(o.closes_at, _config.timezone_offset)
+        end
+        ret text
+    end
+    if e.kind == engine.EV_SETTLED:
+        mut title := "🟰 <b>مساوی</b>"
+        if o.status == types.ST_WON: title = "✅ <b>برد</b>" end
+        if o.status == types.ST_LOST: title = "🛑 <b>باخت</b>" end
+        ret title + "\n\n" + head + "\nقیمت ورود: <code>" + timex.FormatPrice(o.open_price) +
+            "</code> · قیمت خروج: <code>" + timex.FormatPrice(o.close_price) + "</code>\nسود/زیان: <b>" +
+            timex.FormatMoney(o.profit) + "</b>"
+    end
+    if e.kind == engine.EV_FAILED:
+        ret "⚠️ <b>سفارش ناموفق</b>\n\n" + head + "\n" + texts.EscapeHtml(e.detail)
+    end
+    if e.kind == engine.EV_EXPIRED:
+        ret "⌛️ <b>سفارش منقضی شد</b>\n\n" + head + "\nقیمت تا پایان مهلت به <code>" +
+            timex.FormatPrice(o.trigger_price) + "</code> نرسید."
+    end
+    if e.kind == engine.EV_MISSED:
+        ret "🚫 <b>فرصت از دست رفت، سفارش لغو شد</b>\n\n" + head + "\n" + texts.EscapeHtml(e.detail) +
+            "\nقیمت فعلی: <code>" + timex.FormatPrice(e.price) + "</code>\nبرای ورود با قیمت تازه، سفارش جدید ثبت کنید."
+    end
+    if e.kind == engine.EV_SETTLE_LATE:
+        ret "⏱ <b>نتیجهٔ معامله هنوز نرسیده</b>\n\n" + head +
+            "\nزمان انقضا گذشته اما کارگزار هنوز نتیجه را اعلام نکرده است. پیگیری ادامه دارد."
+    end
+    ret ""
 end
 
 pub func Ready(): bool:
