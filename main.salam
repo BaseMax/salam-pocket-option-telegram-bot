@@ -26,9 +26,24 @@ const HOUSEKEEP_INTERVAL := 1.0
 const TELEGRAM_INTERVAL := 1.0
 const HEARTBEAT_INTERVAL := 30.0
 
+/*
+ * How long Telegram may hold a poll open when no order is being followed.
+ *
+ * With orders live the loop asks and returns at once, because the broker
+ * sockets need the turn back. With nothing to watch there is nothing to
+ * return to, so the poll waits at the far end instead of this process
+ * asking twenty times a minute: a request that costs nothing to leave open
+ * is cheaper than one repeated.
+ */
+const IDLE_POLL_SECONDS := 20 as i64
+
 func WriteHeartbeat(path: str):
     if path.len() == 0: ret end
     _w := os.WriteFile(path, str.FromInt(time.NowMillis()))
+end
+
+func last_poll_due(now: f64, last: f64): bool:
+    ret now - last >= TELEGRAM_INTERVAL
 end
 
 func Startup(c: config.Config): bool:
@@ -82,7 +97,11 @@ func main:
             tgbot.Notify()
         end
 
-        if now - last_poll >= TELEGRAM_INTERVAL:
+        if engine.ActiveCount() == 0:
+            // Nothing to follow: hand the turn to Telegram and wait there.
+            last_poll = timex.NowSeconds()
+            tgbot.Poll(IDLE_POLL_SECONDS)
+        else last_poll_due(now, last_poll):
             last_poll = now
             tgbot.Poll(0 as i64)
         end
