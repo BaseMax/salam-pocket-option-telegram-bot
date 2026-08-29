@@ -863,21 +863,53 @@ pub func Ready(): bool:
     ret _ready
 end
 
+/*
+ * Hands one getUpdates result to the dispatcher and moves the offset past
+ * it, so the next call asks for what comes after.
+ *
+ * Separate from the fetch so a canned Telegram answer can be run through it
+ * offline - the one seam a second poller on the same token would otherwise
+ * make untestable. Returns how many updates it handled.
+ */
+pub func Apply(result: str): int:
+    mut updates := bot.ParseUpdates(result)
+    defer updates.free()
+
+    mut i := 0
+    while i < updates.len():
+        u := updates.get(i)
+        Dispatch(u)
+        // Telegram may answer out of order; only ever move forward.
+        if u.update_id >= _offset: _offset = u.update_id + 1 as i64 end
+        i = i + 1
+    end
+    ret updates.len()
+end
+
 // One round of Telegram polling. `timeout` is seconds the long poll may
 // block; 0 keeps the loop free for the broker sockets.
 pub func Poll(timeout: i64):
     resp := bot.GetUpdates(_bot, _offset, 20 as i64, timeout)
     if !resp.ok: ret end
+    _n := Apply(resp.result)
+end
 
-    mut updates := bot.ParseUpdates(resp.result)
-    defer updates.free()
-    mut i := 0
-    while i < updates.len():
-        u := updates.get(i)
-        Dispatch(u)
-        if u.update_id >= _offset: _offset = u.update_id + 1 as i64 end
-        i = i + 1
-    end
+// Where the next poll will resume. The loop is the only writer; this is for
+// checks and for a log line that has to explain a gap.
+pub func Offset(): i64:
+    ret _offset
+end
+
+// Points the bot at a chat without a token, so a check can drive Dispatch
+// with nothing leaving the process.
+pub func UseFakeBot():
+    _bot = bot.Bot { token = "" }
+end
+
+// The configuration Init would have stored, for a check that skips the
+// Telegram round trip Init makes.
+pub func Configure(c: config.Config):
+    _config = c
 end
 
 // Turns whatever the engine reported into messages.

@@ -60,20 +60,26 @@ services. All of them are demo-account only.
 
 | program | what it proves | touches |
 | --- | --- | --- |
-| `tests` | durations, symbols, the command parser, the trading rules, SQLite, settings, every notification | nothing |
+| `tests` | durations, symbols, the command parser, the trading rules, SQLite, settings, every notification, 64-bit ids, update polling | nothing |
 | `recovery` | what a restart does: mid-flight orders fail, live ones are re-attached | nothing |
 | `smoke` | connect, authenticate, asset list, balance, live ticks | broker (read only) |
 | `tgcheck` | getMe, an HTML message with an inline keyboard, edit, delete | Telegram |
-| `dryrun` | a scripted conversation through the real dispatcher | Telegram + broker |
+| `dryrun` | a scripted conversation through the real dispatcher, including the whole panel: both menus, every toggle, each typed value, a rejected one, and submit | Telegram + broker |
 | `soak` | four minutes of live ticks: memory, CPU, the expiry rule, idle cleanup | broker (read only) |
 | `tradetest` | one $1 demo trade from trigger to settlement | broker (places a trade) |
 
 `dryrun` and `tgcheck` never call `getUpdates`, so they can be run while
 another instance of the bot is polling the same token.
 
-Measured on the live demo account: 153 assertions pass, four minutes of tick
+Measured on the live demo account: 174 assertions pass, four minutes of tick
 traffic leave RSS flat at 2 MB and the CPU at 0%, and one $1 trade went
 `triggered → opened → settled` with the broker's own deal id.
+
+The one thing no check here covers is `getUpdates` itself: Telegram allows a
+single poller per token, so exercising it means being the only bot running on
+that token. Everything around it is covered - `Init`, `Apply` (the half of
+`Poll` that parses updates and moves the offset, driven by canned Telegram
+answers in `tests`), `Dispatch`, `Notify`, and the engine turn.
 
 ## Differences from the TypeScript version
 

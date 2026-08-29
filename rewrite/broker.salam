@@ -13,6 +13,7 @@
 package broker
 
 import str
+import conv
 import time
 import net.socketio
 import jsonx "jsonx.salam"
@@ -75,6 +76,7 @@ mut _real_assets := Vector {} as Vector<symbols.Asset>
 mut _demo := Creds {}
 mut _real := Creds {}
 mut _offset_default := 7200 as i64
+mut _request_counter := 0 as i64
 mut _verbose := false
 
 // A trade the broker has closed and paid out.
@@ -724,8 +726,11 @@ pub func PlaceOrder(index: int, amount: f64, direction: str, duration_seconds: i
         ret ack
     end
 
-    request_id := (timex.NowSeconds() as i64) * 1000 + (_sessions.len() as i64)
-    mut body := `{"asset":"` + s.symbol + `","amount":` + timex.FormatPrice(amount) +
+    _request_counter = _request_counter + 1 as i64
+    if _request_counter >= 1000: _request_counter = 0 as i64 end
+    request_id := (timex.NowSeconds() as i64) * 1000 + _request_counter
+
+    mut body := `{"asset":"` + s.symbol + `","amount":` + conv.FormatFloatPrec(amount, 2) +
         `,"action":"` + direction + `","isDemo":`
     if s.mode == types.MODE_DEMO: body = body + "1" else: body = body + "0" end
     body = body + `,"requestId":` + str.FromInt(request_id) + `,"optionType":100`
@@ -751,6 +756,16 @@ pub func PlaceOrder(index: int, amount: f64, direction: str, duration_seconds: i
         if ev.kind == socketio.EV_EVENT:
             payload := Payload(ev)
             if ev.name == IN_OPEN_OK:
+                // An acknowledgement that names a different request belongs
+                // to an earlier order this session gave up waiting for.
+                // Taking it would put someone else's deal id on this order.
+                answered := jsonx.Field(payload, "requestId")
+                if !jsonx.IsNull(answered) && jsonx.AsInt(answered) != request_id:
+                    Log("ignoring an acknowledgement for request " + answered)
+                    HandleEvent(index, ev.name, payload, max_gap)
+                    socketio.EventFree(ev)
+                    continue
+                end
                 ack.deal_id = jsonx.Unquote(jsonx.Field(payload, "id"))
                 ack.open_price = jsonx.FieldFloat(payload, "openPrice")
                 ack.open_time = jsonx.AsFloat(jsonx.FieldAny(payload, "openTimestamp", "openTime"))
@@ -763,6 +778,11 @@ pub func PlaceOrder(index: int, amount: f64, direction: str, duration_seconds: i
                 ret ack
             end
             if ev.name == IN_OPEN_FAIL:
+                refused := jsonx.Field(payload, "requestId")
+                if !jsonx.IsNull(refused) && jsonx.AsInt(refused) != request_id:
+                    socketio.EventFree(ev)
+                    continue
+                end
                 mut reason := jsonx.Unquote(jsonx.Field(payload, "error"))
                 if reason.len() == 0: reason = jsonx.Unquote(jsonx.Field(payload, "message")) end
                 if reason.len() == 0: reason = "the broker refused the order" end

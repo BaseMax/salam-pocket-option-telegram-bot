@@ -83,17 +83,66 @@ func main:
     tgbot.Dispatch(Message(chat_id, 8 as i64, "۱٫۱۶۳۵۸"))
     time.Sleep(500)
 
-    println "→ cancelling the panel"
-    tgbot.Dispatch(Tap(chat_id, 9 as i64, 0 as i64, "w:cancel", ""))
+    println "→ the timeframe menu, then 5m"
+    tgbot.Dispatch(Tap(chat_id, 9 as i64, 0 as i64, "w:tf", ""))
+    time.Sleep(400)
+    tgbot.Dispatch(Tap(chat_id, 10 as i64, 0 as i64, "w:tf:300", ""))
+    time.Sleep(400)
+
+    println "→ opening and closing the in-panel help"
+    tgbot.Dispatch(Tap(chat_id, 11 as i64, 0 as i64, "w:info", ""))
+    time.Sleep(400)
+    tgbot.Dispatch(Tap(chat_id, 12 as i64, 0 as i64, "w:info", ""))
+    time.Sleep(400)
+
+    println "→ flipping direction, account, entry and expiry"
+    tgbot.Dispatch(Tap(chat_id, 13 as i64, 0 as i64, "w:direction", ""))
+    tgbot.Dispatch(Tap(chat_id, 14 as i64, 0 as i64, "w:trigger", ""))
+    tgbot.Dispatch(Tap(chat_id, 15 as i64, 0 as i64, "w:expiry", ""))
+    time.Sleep(400)
+    println "→ back to a fixed expiry, and a typed duration"
+    tgbot.Dispatch(Tap(chat_id, 16 as i64, 0 as i64, "w:expiry", ""))
+    tgbot.Dispatch(Tap(chat_id, 17 as i64, 0 as i64, "w:duration", ""))
+    time.Sleep(400)
+    tgbot.Dispatch(Message(chat_id, 18 as i64, "۲ دقیقه"))
+    time.Sleep(400)
+
+    println "→ a typed amount, and a rejected one first"
+    tgbot.Dispatch(Tap(chat_id, 19 as i64, 0 as i64, "w:amount", ""))
+    time.Sleep(400)
+    tgbot.Dispatch(Message(chat_id, 20 as i64, "nonsense"))
+    time.Sleep(400)
+    tgbot.Dispatch(Message(chat_id, 21 as i64, "2"))
+    time.Sleep(400)
+
+    println "→ a typed symbol, then submitting the panel"
+    tgbot.Dispatch(Tap(chat_id, 22 as i64, 0 as i64, "w:symbol", ""))
+    time.Sleep(400)
+    tgbot.Dispatch(Message(chat_id, 23 as i64, "eurusd otc"))
+    time.Sleep(400)
+    tgbot.Dispatch(Tap(chat_id, 24 as i64, 0 as i64, "w:submit", ""))
+    time.Sleep(1000)
+
+    mut from_panel := store.ListActiveByChat(chat_id)
+    println "orders after the panel submit: " + str.FromInt(from_panel.len() as i64)
+    if from_panel.len() > 0:
+        p := from_panel.get(0)
+        println "  " + p.id + " " + p.symbol + " " + p.direction + " " + p.expiry_mode +
+            " dur=" + str.FromInt(p.duration_seconds) + " tf=" + str.FromInt(p.timeframe_seconds) +
+            " amount=" + str.FromFloat(p.amount) + " entry=" + p.trigger_mode + " chart=" + p.chart_type
+        println "→ cancelling it"
+        tgbot.Dispatch(Message(chat_id, 25 as i64, "/cancel " + p.id))
+    end
+    from_panel.free()
 
     println "→ /order (a real pending order, far from the market)"
-    tgbot.Dispatch(Message(chat_id, 10 as i64, "/order EURUSD_otc buy 9.99999 dur=60 amount=1 acc=demo valid=2m"))
+    tgbot.Dispatch(Message(chat_id, 30 as i64, "/order EURUSD_otc buy 9.99999 dur=60 amount=1 acc=demo valid=2m"))
 
     println "→ /list"
-    tgbot.Dispatch(Message(chat_id, 11 as i64, "/list"))
+    tgbot.Dispatch(Message(chat_id, 31 as i64, "/list"))
 
     println "→ /stats"
-    tgbot.Dispatch(Message(chat_id, 12 as i64, "/stats"))
+    tgbot.Dispatch(Message(chat_id, 32 as i64, "/stats"))
 
     println "→ letting the engine run for a few seconds"
     mut i := 0
@@ -109,12 +158,12 @@ func main:
         o := active.get(0)
         println "  " + o.id + " " + o.symbol + " " + o.status + " side=" + o.approach_side + " ref=" + str.FromFloat(o.reference_price)
         println "→ cancelling it"
-        tgbot.Dispatch(Message(chat_id, 13 as i64, "/cancel " + o.id))
+        tgbot.Dispatch(Message(chat_id, 33 as i64, "/cancel " + o.id))
     end
     active.free()
 
     println "→ /status"
-    tgbot.Dispatch(Message(chat_id, 14 as i64, "/status"))
+    tgbot.Dispatch(Message(chat_id, 34 as i64, "/status"))
 
     engine.Stop()
     store.Close()
