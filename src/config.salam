@@ -1,10 +1,10 @@
 // Everything the process reads from its environment, once, at startup.
 package config
 
-import parse "parse.salam"
+import parse "telegram/parse.salam"
 import os
 import str
-import timex "timex.salam"
+import timex "util/timex.salam"
 
 @en "Config"
 @fa "پیکربندی"

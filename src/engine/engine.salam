@@ -12,12 +12,12 @@ package engine
 
 import str
 import time
-import types "types.salam"
-import store "store.salam"
-import broker "broker.salam"
-import timex "timex.salam"
-import config "config.salam"
-import symbols "symbols.salam"
+import types "../types.salam"
+import store "../storage/store.salam"
+import broker "../pocket/broker.salam"
+import timex "../util/timex.salam"
+import config "../config.salam"
+import symbols "../pocket/symbols.salam"
 
 // What the engine reports. The order travels with the event so the bot can
 // render it without going back to the database.

@@ -5,19 +5,19 @@ package main
 import os
 import str
 import testing
-import types "types.salam"
-import timex "timex.salam"
-import symbols "symbols.salam"
-import parse "parse.salam"
-import engine "engine.salam"
-import store "store.salam"
-import jsonx "jsonx.salam"
-import ssid "ssid.salam"
-import texts "texts.salam"
-import config "config.salam"
-import settings "settings.salam"
-import tgbot "tgbot.salam"
-import engine_events "engine.salam"
+import types "../src/types.salam"
+import timex "../src/util/timex.salam"
+import symbols "../src/pocket/symbols.salam"
+import parse "../src/telegram/parse.salam"
+import engine "../src/engine/engine.salam"
+import store "../src/storage/store.salam"
+import jsonx "../src/util/jsonx.salam"
+import ssid "../src/pocket/ssid.salam"
+import texts "../src/telegram/texts.salam"
+import config "../src/config.salam"
+import settings "../src/storage/settings.salam"
+import tgbot "../src/telegram/tgbot.salam"
+import engine_events "../src/engine/engine.salam"
 
 // The stdlib's assertions take no message; these keep one, because a
 // failing line should say what property it was checking.

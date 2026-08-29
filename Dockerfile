@@ -26,11 +26,13 @@ ENV PATH="/opt/salam:${PATH}" \
     SALAM_STD="/opt/salam/std"
 
 WORKDIR /src
-COPY *.salam ./
+COPY main.salam ./
+COPY src ./src
+COPY checks ./checks
 
 # The suite runs here, so an image that builds is an image whose bot passed
 # its tests on the way in.
-RUN salam build tests.salam --output=/src/tests \
+RUN salam build checks/tests.salam --output=/src/tests \
     && /src/tests \
     && salam build main.salam --output=/src/bot
 

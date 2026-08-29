@@ -2,11 +2,11 @@
 package main
 
 import str
-import config "config.salam"
-import store "store.salam"
-import engine "engine.salam"
-import tgbot "tgbot.salam"
-import types "types.salam"
+import config "../src/config.salam"
+import store "../src/storage/store.salam"
+import engine "../src/engine/engine.salam"
+import tgbot "../src/telegram/tgbot.salam"
+import types "../src/types.salam"
 
 mut failures := 0
 

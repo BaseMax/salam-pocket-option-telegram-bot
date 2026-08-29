@@ -4,9 +4,9 @@
 package texts
 
 import str
-import types "types.salam"
-import timex "timex.salam"
-import symbols "symbols.salam"
+import types "../types.salam"
+import timex "../util/timex.salam"
+import symbols "../pocket/symbols.salam"
 
 pub const RETIRED_MARK := "⌛️ این پنل"
 
@@ -82,7 +82,6 @@ pub func StatusLabel(status: str): str:
     ret "⌛️ منقضی شده"
 end
 
-// How long the trade stays open, in the words its expiry mode calls for.
 pub func ExpiryDescription(o: types.Order): str:
     if o.expiry_mode == types.EXPIRY_FIXED:
         ret timex.FormatDuration(o.duration_seconds) + " (ثابت)"
@@ -96,7 +95,6 @@ pub func Headline(o: types.Order): str:
     ret "<b>#" + EscapeHtml(o.id) + "</b> · " + EscapeHtml(o.symbol) + " · " + Direction(o.direction)
 end
 
-// One broker asset as a line: symbol, whether its market is open, payout.
 pub func AssetLine(a: symbols.Asset): str:
     mut line := "<code>" + EscapeHtml(a.symbol) + "</code> · "
     if a.is_open: line = line + "🟢 باز" else: line = line + "🔴 بسته" end
@@ -105,7 +103,6 @@ pub func AssetLine(a: symbols.Asset): str:
     ret line
 end
 
-// The full order card, as /list and every notification show it.
 pub func RenderOrder(o: types.Order, offset_minutes: i64, compact: bool): str:
     mut out := Headline(o) + "\n"
     out = out + "وضعیت: " + StatusLabel(o.status) + "\n"

@@ -186,24 +186,31 @@ next candle instead of opening a trade that is over before it starts.
 
 ## Architecture
 
-| file | what it owns |
-| --- | --- |
-| `main.salam` | startup and the loop |
-| `config.salam` | the environment, and the order limits |
-| `types.salam` | Order, OrderSpec, and the vocabulary constants |
-| `store.salam` | SQLite: schema, orders, settings |
-| `settings.salam` | the defaults `/set` changes, and stored credentials |
-| `timex.salam` | duration parsing and formatting, candle boundaries, prices |
-| `jsonx.salam` | the JSON arrays the broker sends, read defensively |
-| `ssid.salam` | both dialects of the pasted auth frame |
-| `broker.salam` | the Pocket Option socket: auth, ticks, assets, orders, deals |
-| `symbols.salam` | symbol spelling, matching and search |
-| `engine.salam` | the order state machine |
-| `parse.salam` | the one-line `/order` command and every choice word |
-| `texts.salam` | all Persian copy, including the guides |
-| `tgapi.salam` | Telegram calls and inline keyboards |
-| `wizard.salam` | the `/new` panel |
-| `tgbot.salam` | commands, callbacks, notifications |
+```
+main.salam                    startup and the loop
+src/
+  types.salam                 Order, OrderSpec, and the vocabulary constants
+  config.salam                the environment, and the order limits
+  util/
+    timex.salam               duration parsing and formatting, candle boundaries, prices
+    jsonx.salam               the JSON arrays the broker sends, read defensively
+  pocket/
+    broker.salam              the Pocket Option socket: auth, ticks, assets, orders, deals
+    ssid.salam                both dialects of the pasted auth frame
+    symbols.salam             symbol spelling, matching and search
+  engine/
+    engine.salam              the order state machine
+  storage/
+    store.salam               SQLite: schema, orders, settings
+    settings.salam            the defaults /set changes, and stored credentials
+  telegram/
+    tgapi.salam               Telegram calls and inline keyboards
+    tgbot.salam               commands, callbacks, notifications
+    wizard.salam              the /new panel
+    texts.salam               all Persian copy, including the guides
+    parse.salam               the one-line /order command and every choice word
+checks/                       the programs build.sh builds beside the bot
+```
 
 ## Why it is shaped this way
 

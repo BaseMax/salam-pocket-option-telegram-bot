@@ -2,13 +2,13 @@
 // the engine re-reads it on boot, so a restart loses nothing.
 package store
 
-import parse "parse.salam"
+import parse "../telegram/parse.salam"
 import str
 import conv
 import rand
 import db.sqlite
-import types "types.salam"
-import timex "timex.salam"
+import types "../types.salam"
+import timex "../util/timex.salam"
 
 const SCHEMA := `
 CREATE TABLE IF NOT EXISTS orders (
@@ -199,7 +199,6 @@ pub func Save(o: types.Order):
     _e := sqlite.Exec(Db(), sql)
 end
 
-// Stores a brand new order and hands back the row as it now stands.
 pub func Create(o: types.Order): types.Order:
     mut row := o
     row.id = FreshId()

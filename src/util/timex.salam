@@ -159,7 +159,6 @@ pub func FormatDuration(seconds: i64): str:
     ret out
 end
 
-// The same duration spelled out in Persian, for the panels people read.
 pub func FormatDurationFa(seconds: i64): str:
     if seconds <= 0: ret "0 ثانیه" end
 
@@ -194,7 +193,6 @@ pub func FormatDurationFa(seconds: i64): str:
     ret out
 end
 
-// Timeframes the chart offers, as the buttons list them.
 pub func TimeframeLabel(seconds: i64): str:
     ret FormatDuration(seconds)
 end

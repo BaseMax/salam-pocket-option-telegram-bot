@@ -3,15 +3,15 @@
 // and no getUpdates call can clash with another running instance.
 package main
 
-import parse "parse.salam"
+import parse "../src/telegram/parse.salam"
 import str
 import time
 import telegram.bot
-import config "config.salam"
-import tgapi "tgapi.salam"
-import texts "texts.salam"
-import types "types.salam"
-import timex "timex.salam"
+import config "../src/config.salam"
+import tgapi "../src/telegram/tgapi.salam"
+import texts "../src/telegram/texts.salam"
+import types "../src/types.salam"
+import timex "../src/util/timex.salam"
 
 func main:
     c := config.Load()

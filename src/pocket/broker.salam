@@ -16,11 +16,11 @@ import str
 import conv
 import time
 import net.socketio
-import jsonx "jsonx.salam"
-import types "types.salam"
+import jsonx "../util/jsonx.salam"
+import types "../types.salam"
 import symbols "symbols.salam"
-import timex "timex.salam"
-import config "config.salam"
+import timex "../util/timex.salam"
+import config "../config.salam"
 import ssid "ssid.salam"
 
 const OUT_AUTH := "auth"

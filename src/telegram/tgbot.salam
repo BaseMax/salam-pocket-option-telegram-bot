@@ -10,19 +10,19 @@ import str
 import time
 import telegram.bot
 import encoding.json
-import types "types.salam"
-import store "store.salam"
-import config "config.salam"
-import settings "settings.salam"
-import engine "engine.salam"
-import broker "broker.salam"
-import symbols "symbols.salam"
+import types "../types.salam"
+import store "../storage/store.salam"
+import config "../config.salam"
+import settings "../storage/settings.salam"
+import engine "../engine/engine.salam"
+import broker "../pocket/broker.salam"
+import symbols "../pocket/symbols.salam"
 import texts "texts.salam"
-import timex "timex.salam"
+import timex "../util/timex.salam"
 import parse "parse.salam"
 import tgapi "tgapi.salam"
 import wizard "wizard.salam"
-import ssid "ssid.salam"
+import ssid "../pocket/ssid.salam"
 
 mut _config := config.Config {}
 mut _bot := bot.Bot {}
@@ -903,8 +903,6 @@ pub func Poll(timeout: i64):
     _n := Apply(resp.result)
 end
 
-// Where the next poll will resume. The loop is the only writer; this is for
-// checks and for a log line that has to explain a gap.
 pub func Offset(): i64:
     ret _offset
 end

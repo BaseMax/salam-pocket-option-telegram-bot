@@ -5,12 +5,12 @@ package main
 import os
 import str
 import time
-import config "config.salam"
-import broker "broker.salam"
-import ssid "ssid.salam"
-import types "types.salam"
-import timex "timex.salam"
-import symbols "symbols.salam"
+import config "../src/config.salam"
+import broker "../src/pocket/broker.salam"
+import ssid "../src/pocket/ssid.salam"
+import types "../src/types.salam"
+import timex "../src/util/timex.salam"
+import symbols "../src/pocket/symbols.salam"
 
 func main:
     c := config.Load()

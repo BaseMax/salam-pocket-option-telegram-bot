@@ -3,9 +3,9 @@
 package settings
 
 import str
-import types "types.salam"
+import types "../types.salam"
 import store "store.salam"
-import config "config.salam"
+import config "../config.salam"
 
 mut _config := config.Config {}
 

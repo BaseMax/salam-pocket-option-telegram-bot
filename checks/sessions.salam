@@ -10,10 +10,10 @@ package main
 
 import str
 import time
-import config "config.salam"
-import broker "broker.salam"
-import ssid "ssid.salam"
-import types "types.salam"
+import config "../src/config.salam"
+import broker "../src/pocket/broker.salam"
+import ssid "../src/pocket/ssid.salam"
+import types "../src/types.salam"
 
 mut failures := 0
 

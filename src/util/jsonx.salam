@@ -62,7 +62,6 @@ pub func ElementAt(raw: str, index: int): str:
     ret items.get(index)
 end
 
-// A JSON string value without its quotes and escapes.
 pub func Unquote(raw: str): str:
     text := str.Trim(raw)
     if text.len() < 2: ret text end

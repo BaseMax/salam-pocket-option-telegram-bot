@@ -3,9 +3,9 @@
 package parse
 
 import str
-import types "types.salam"
-import timex "timex.salam"
-import symbols "symbols.salam"
+import types "../types.salam"
+import timex "../util/timex.salam"
+import symbols "../pocket/symbols.salam"
 
 // ParseNumber says this when the text is not a number.
 pub const NOT_A_NUMBER := 0.0 - 1000000000.0

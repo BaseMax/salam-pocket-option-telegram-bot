@@ -10,11 +10,11 @@
 package wizard
 
 import str
-import types "types.salam"
-import timex "timex.salam"
+import types "../types.salam"
+import timex "../util/timex.salam"
 import texts "texts.salam"
 import parse "parse.salam"
-import symbols "symbols.salam"
+import symbols "../pocket/symbols.salam"
 import tgapi "tgapi.salam"
 import telegram.bot
 

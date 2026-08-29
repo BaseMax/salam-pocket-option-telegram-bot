@@ -5,10 +5,10 @@
 // comes back is the exact JSON to emit as the socket's "auth" event.
 package ssid
 
-import parse "parse.salam"
+import parse "../telegram/parse.salam"
 import str
 import encoding.json
-import types "types.salam"
+import types "../types.salam"
 
 @en "Auth"
 @fa "احراز هویت"

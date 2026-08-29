@@ -111,7 +111,6 @@ pub struct Order:
     pub updated_at: f64 = 0.0
 end
 
-// An order in one of these states is still being followed by the engine.
 pub func IsActive(status: str): bool:
     ret status == ST_PENDING || status == ST_ARMED || status == ST_PLACING || status == ST_OPEN
 end

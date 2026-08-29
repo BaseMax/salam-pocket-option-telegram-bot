@@ -3,15 +3,15 @@
 // updates from another instance of the bot that is already polling.
 package main
 
-import parse "parse.salam"
+import parse "../src/telegram/parse.salam"
 import str
 import time
 import telegram.bot
-import config "config.salam"
-import store "store.salam"
-import settings "settings.salam"
-import engine "engine.salam"
-import tgbot "tgbot.salam"
+import config "../src/config.salam"
+import store "../src/storage/store.salam"
+import settings "../src/storage/settings.salam"
+import engine "../src/engine/engine.salam"
+import tgbot "../src/telegram/tgbot.salam"
 
 func Message(chat_id: i64, id: i64, text: str): bot.Update:
     ret bot.Update {
