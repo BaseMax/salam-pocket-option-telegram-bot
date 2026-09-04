@@ -1,11 +1,11 @@
 /*
  * The /new panel: one inline keyboard per chat that builds an order.
  *
- * Buttons that only flip a setting change it on the spot. The six values a
- * user has to type - symbol, price, amount, duration, candle count, order
- * validity - are asked for in their own message with the reply box already
- * open, because a panel that silently waits for typing is a panel nobody
- * knows how to answer.
+ * Buttons that only flip a setting change it on the spot. The values a user
+ * has to type - symbol, price, amount, duration, candle count, order
+ * validity, payout floor - are asked for in their own message with the reply
+ * box already open, because a panel that silently waits for typing is a
+ * panel nobody knows how to answer.
  */
 package wizard
 
@@ -45,8 +45,9 @@ pub struct Draft:
     pub candle_count: i64 = 1
     pub amount: f64 = 1.0
     pub valid_for_seconds: i64 = 0
+    pub min_payout: i64 = 0
 
-    // "" or one of symbol|price|amount|duration|candles|valid
+    // "" or one of symbol|price|amount|duration|candles|valid|payout
     pub awaiting: str = ""
     // "" or chart|tf
     pub menu: str = ""
@@ -69,6 +70,7 @@ func PromptTitle(field: str): str:
     if field == "amount": ret "مبلغ معامله را به دلار تایپ کنید و بفرستید." end
     if field == "duration": ret "مدت ماندن در معامله را تایپ کنید و بفرستید." end
     if field == "candles": ret "تعداد کندل را تایپ کنید و بفرستید." end
+    if field == "payout": ret "حداقل نرخ پرداخت را به درصد تایپ کنید و بفرستید." end
     ret "مدت اعتبار سفارش را تایپ کنید و بفرستید."
 end
 
@@ -94,6 +96,12 @@ func PromptMessage(field: str): str:
         ret "⌨️ <b>تعداد کندل را تایپ کنید</b>\n\nمعامله تا پایان چند کندل باز بماند؟ فقط عدد.\n" +
             "نمونه: <code>1</code> یعنی تا پایان همین کندل جاری · <code>3</code> یعنی تا پایان سومین کندل."
     end
+    if field == "payout":
+        ret "⌨️ <b>حداقل نرخ پرداخت را تایپ کنید</b>\n\nهمان درصدی که کارگزار جلوی نام نماد می‌نویسد و مدام بالا و پایین می‌رود.\n" +
+            "دقیقاً در لحظه‌ای که قیمت به هدف می‌رسد خوانده می‌شود: اگر برابر یا بیشتر از عدد شما بود معامله زده می‌شود، وگرنه زده نمی‌شود و فقط خبرش را می‌دهیم.\n" +
+            "نمونه: <code>90</code> · <code>۸۵</code> · <code>92%</code>\n" +
+            "برای برداشتن این شرط، بفرستید <code>0</code>."
+    end
     ret "⌨️ <b>مدت اعتبار سفارش را تایپ کنید</b>\n\nتا چه مدت منتظر رسیدن قیمت به هدف بمانیم؟ بعد از آن سفارش منقضی می‌شود.\n" +
         "نمونه: <code>30m</code> · <code>۳۰ دقیقه</code> · <code>2h</code> · <code>1 روز</code>\n" +
         "برای اینکه هیچ‌وقت منقضی نشود، بفرستید <code>0</code>.\n\n" + texts.TimeFormatHint()
@@ -105,6 +113,7 @@ func PromptPlaceholder(field: str): str:
     if field == "amount": ret "مبلغ به دلار، مثلاً 5" end
     if field == "duration": ret "مثلاً 1m یا 90 یا 2 دقیقه" end
     if field == "candles": ret "مثلاً 1" end
+    if field == "payout": ret "درصد، مثلاً 90 · 0 یعنی بدون شرط" end
     ret "مثلاً 30m یا 2 ساعت · 0 یعنی بی‌نهایت"
 end
 
@@ -114,11 +123,13 @@ func PromptToast(field: str): str:
     if field == "amount": ret "⌨️ مبلغ را به دلار همین‌جا تایپ کنید و بفرستید. مثلاً 5" end
     if field == "duration": ret "⌨️ مدت معامله را همین‌جا تایپ کنید. مثلاً 1m یا 90 یا 2 دقیقه" end
     if field == "candles": ret "⌨️ تعداد کندل را همین‌جا تایپ کنید. مثلاً 1" end
+    if field == "payout": ret "⌨️ حداقل نرخ پرداخت را به درصد تایپ کنید. مثلاً 90 · 0 یعنی بدون شرط" end
     ret "⌨️ مدت اعتبار را همین‌جا تایپ کنید. مثلاً 30m · 0 یعنی بی‌نهایت"
 end
 
 func IsPromptField(action: str): bool:
-    ret action == "symbol" || action == "price" || action == "amount" || action == "duration" || action == "candles" || action == "valid"
+    ret action == "symbol" || action == "price" || action == "amount" || action == "duration" ||
+        action == "candles" || action == "valid" || action == "payout"
 end
 
 func SymbolText(d: Draft): str:
@@ -150,7 +161,8 @@ func RenderPanel(d: Draft, final: bool): str:
     out = out + "چارت: <b>" + timex.TimeframeLabel(d.timeframe_seconds) + " · " + texts.ChartLabel(d.chart_type) + "</b>\n"
     out = out + "مبلغ: <b>" + timex.FormatMoney(d.amount) + "</b>\n"
     out = out + "حساب: <b>" + texts.AccountLabel(d.account_mode) + "</b>\n"
-    out = out + "اعتبار سفارش: <b>" + ValidText(d) + "</b>"
+    out = out + "اعتبار سفارش: <b>" + ValidText(d) + "</b>\n"
+    out = out + "حداقل نرخ پرداخت: <b>" + texts.PayoutLabel(d.min_payout) + "</b>"
     if final: ret out end
 
     if d.menu == "chart":
@@ -173,7 +185,8 @@ func RenderPanel(d: Draft, final: bool): str:
         out = out + "<b>نحوهٔ ورود</b> — " + texts.TriggerHelp(d.trigger_mode) + "\n"
         out = out + "<b>انقضا</b> — " + texts.ExpiryHelp(d.expiry_mode) + "\n"
         out = out + "<b>چارت</b> — " + texts.ChartHelp(d.chart_type) + "\n"
-        out = out + "<b>اعتبار سفارش</b> — اگر تا این مدت قیمت به هدف نرسد، سفارش لغو می‌شود.\n\n"
+        out = out + "<b>اعتبار سفارش</b> — اگر تا این مدت قیمت به هدف نرسد، سفارش لغو می‌شود.\n"
+        out = out + "<b>حداقل نرخ پرداخت</b> — همان درصدی که کنار نام نماد نوشته می‌شود و مدام تغییر می‌کند. در لحظهٔ رسیدن قیمت به هدف خوانده می‌شود؛ اگر کمتر از عدد شما باشد معامله زده نمی‌شود و فقط خبرش را می‌دهیم.\n\n"
         out = out + "دکمه‌های ✍️ مقدارشان را از شما می‌پرسند: بعد از زدنشان باید مقدار را تایپ کنید و بفرستید."
     end
 
@@ -268,7 +281,12 @@ func MainKeyboard(d: Draft): str:
 
     mut valid := "∞"
     if d.valid_for_seconds > 0: valid = timex.FormatDuration(d.valid_for_seconds) end
+    mut payout := "—"
+    if d.min_payout > 0: payout = str.FromInt(d.min_payout) + "٪+" end
     tgapi.Button(k, "✍️ اعتبار: " + valid, "w:valid")
+    tgapi.Button(k, "✍️ حداقل پرداخت: " + payout, "w:payout")
+    tgapi.Row(k)
+
     mut info := "❓ راهنما"
     if d.info: info = "✖️ بستن راهنما" end
     tgapi.Button(k, info, "w:info")
@@ -371,6 +389,13 @@ func ApplyInput(d &: Draft, field: str, raw: str): str:
         if !parse.IsNumber(count) || count < 1.0: ret "تعداد کندل نامعتبر است. عددی بزرگ‌تر از صفر بفرستید، مثلاً <code>1</code>." end
         d.candle_count = (count + 0.5) as i64
         d.expiry_mode = types.EXPIRY_FLOATING
+        ret ""
+    end
+
+    if field == "payout":
+        percent := parse.Percent(raw)
+        if percent < 0: ret "حداقل نرخ پرداخت نامعتبر است. عددی بین ۰ تا ۱۰۰ بفرستید، مثلاً <code>90</code>؛ برای برداشتن شرط <code>0</code>." end
+        d.min_payout = percent
         ret ""
     end
 
@@ -619,5 +644,6 @@ pub func Spec(chat_id: i64): types.OrderSpec:
     spec.amount = d.amount
     spec.account_mode = d.account_mode
     spec.valid_for_seconds = d.valid_for_seconds
+    spec.min_payout = d.min_payout
     ret spec
 end

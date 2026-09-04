@@ -131,6 +131,17 @@ pub func AccountMode(raw: str): str:
     ret ""
 end
 
+// A payout floor in percent. Returns -1 when the text is not one, so a
+// caller can tell "0, meaning no condition" from "not a number at all".
+pub func Percent(raw: str): i64:
+    mut text := str.Trim(raw)
+    text = str.Replace(text, "%", "")
+    text = str.Replace(text, "٪", "")
+    value := ParseNumber(text)
+    if !IsNumber(value) || value < 0.0 || value > 100.0: ret 0 as i64 - 1 as i64 end
+    ret (value + 0.5) as i64
+end
+
 pub func OnOff(raw: str): str:
     w := NormalizeWord(raw)
     if w == "on" || w == "true" || w == "1" || w == "yes" || w == "روشن" || w == "بله": ret "on" end
@@ -216,6 +227,11 @@ pub func ParseOrder(args: str, spec &: types.OrderSpec): str:
             chart := ChartType(value)
             if chart.len() == 0: ret "نوع چارت نامعتبر: " + value end
             spec.chart_type = chart
+
+        else key == "payout" || key == "minpayout" || key == "min_payout":
+            percent := Percent(value)
+            if percent < 0: ret "حداقل نرخ پرداخت نامعتبر (عددی بین ۰ تا ۱۰۰): " + value end
+            spec.min_payout = percent
 
         else key == "acc" || key == "account":
             account := AccountMode(value)

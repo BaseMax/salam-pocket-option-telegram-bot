@@ -40,7 +40,8 @@ CREATE TABLE IF NOT EXISTS orders (
   profit            REAL,
   note              TEXT,
   created_at        REAL    NOT NULL,
-  updated_at        REAL    NOT NULL
+  updated_at        REAL    NOT NULL,
+  min_payout        INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_chat   ON orders(chat_id);
@@ -51,7 +52,7 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 `
 
-const COLUMNS := "id, chat_id, account_mode, symbol, direction, trigger_price, trigger_mode, approach_side, amount, expiry_mode, duration_seconds, candle_count, timeframe_seconds, chart_type, status, reference_price, valid_until, triggered_price, triggered_at, deal_id, open_price, opened_at, closes_at, close_price, closed_at, profit, note, created_at, updated_at"
+const COLUMNS := "id, chat_id, account_mode, symbol, direction, trigger_price, trigger_mode, approach_side, amount, expiry_mode, duration_seconds, candle_count, timeframe_seconds, chart_type, status, reference_price, valid_until, triggered_price, triggered_at, deal_id, open_price, opened_at, closes_at, close_price, closed_at, profit, note, created_at, updated_at, min_payout"
 
 const ID_ALPHABET := "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
@@ -116,6 +117,7 @@ func ReadOrder(rows: sqlite.Rows): types.Order:
     o.note = sqlite.Text(rows, 26)
     o.created_at = sqlite.Float(rows, 27)
     o.updated_at = sqlite.Float(rows, 28)
+    o.min_payout = sqlite.Int64(rows, 29)
     ret o
 end
 
@@ -154,6 +156,10 @@ pub func Open(path: str): bool:
     _e1 := sqlite.Exec(Db(), "PRAGMA journal_mode = WAL;")
     _e2 := sqlite.Exec(Db(), "PRAGMA busy_timeout = 5000;")
     _e3 := sqlite.Exec(Db(), SCHEMA)
+    // A database written before the payout floor existed has no column for
+    // it. SQLite refuses to add a column twice, and that refusal is the
+    // answer we wanted, so the error is not one.
+    _e4 := sqlite.Exec(Db(), "ALTER TABLE orders ADD COLUMN min_payout INTEGER NOT NULL DEFAULT 0")
     rand.SeedAuto()
     ret true
 end
@@ -181,6 +187,7 @@ pub func Save(o: types.Order):
         ", candle_count = " + str.FromInt(o.candle_count) +
         ", timeframe_seconds = " + str.FromInt(o.timeframe_seconds) +
         ", chart_type = " + Quote(o.chart_type) +
+        ", min_payout = " + str.FromInt(o.min_payout) +
         ", status = " + Quote(o.status) +
         ", reference_price = " + NumOrNull(o.reference_price, o.has_reference) +
         ", valid_until = " + Num(o.valid_until) +
@@ -235,7 +242,8 @@ pub func Create(o: types.Order): types.Order:
         NumOrNull(row.profit, row.has_profit) + ", " +
         TextOrNull(row.note) + ", " +
         Num(row.created_at) + ", " +
-        Num(row.updated_at) + ")"
+        Num(row.updated_at) + ", " +
+        str.FromInt(row.min_payout) + ")"
     _e := sqlite.Exec(Db(), sql)
     ret row
 end

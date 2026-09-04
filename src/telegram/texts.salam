@@ -78,6 +78,7 @@ pub func StatusLabel(status: str): str:
     if status == types.ST_LOST: ret "🛑 باخت" end
     if status == types.ST_DRAW: ret "🟰 مساوی" end
     if status == types.ST_CANCELLED: ret "⚪️ لغو شده" end
+    if status == types.ST_SKIPPED: ret "🚫 انجام نشد (نرخ پرداخت کم)" end
     if status == types.ST_FAILED: ret "⚠️ ناموفق" end
     ret "⌛️ منقضی شده"
 end
@@ -89,6 +90,12 @@ pub func ExpiryDescription(o: types.Order): str:
     mut count := "پایان کندل جاری"
     if o.candle_count > 1: count = str.FromInt(o.candle_count) + " کندل" end
     ret count + " × " + timex.TimeframeLabel(o.timeframe_seconds) + " (شناور)"
+end
+
+// The payout floor as the user reads it; 0 means the order never asks.
+pub func PayoutLabel(min_payout: i64): str:
+    if min_payout <= 0: ret "بدون شرط" end
+    ret str.FromInt(min_payout) + "٪ و بالاتر"
 end
 
 pub func Headline(o: types.Order): str:
@@ -111,6 +118,9 @@ pub func RenderOrder(o: types.Order, offset_minutes: i64, compact: bool): str:
     out = out + "مدت معامله: " + ExpiryDescription(o) + "\n"
     out = out + "چارت: " + timex.TimeframeLabel(o.timeframe_seconds) + " · " + ChartLabel(o.chart_type) + "\n"
     out = out + "مبلغ: " + timex.FormatMoney(o.amount) + " · حساب: " + AccountLabel(o.account_mode)
+    if o.min_payout > 0:
+        out = out + "\nحداقل نرخ پرداخت: <b>" + PayoutLabel(o.min_payout) + "</b>"
+    end
 
     if !compact:
         if o.has_reference:
@@ -206,6 +216,7 @@ pub func TradeGuide(): str:
         "• شناور: " + ExpiryHelp(types.EXPIRY_FLOATING) + "\n" +
         "مثال: تایم‌فریم ۱ دقیقه، انقضای شناور، ۱ کندل ← اگر در ثانیهٔ ۲۳ وارد شوید، معامله در پایان همان دقیقه بسته می‌شود.\n\n" +
         "<b>اعتبار سفارش</b> — تا چه مدت منتظر رسیدن قیمت به هدف بمانیم. <code>0</code> یعنی بدون محدودیت.\n\n" +
+        "<b>حداقل نرخ پرداخت</b> — درصدی که کارگزار جلوی هر نماد می‌نویسد و مدام تغییر می‌کند. اگر برای سفارش عددی بگذارید، ربات دقیقاً در همان لحظه‌ای که قیمت به هدف می‌رسد نرخ را می‌خواند: اگر برابر یا بیشتر از عدد شما بود معامله را می‌زند، وگرنه نمی‌زند و فقط خبر می‌دهد که قیمت رسید ولی شرط برقرار نبود. <code>0</code> یعنی این شرط را نگذار.\n\n" +
         "<b>حساب</b> — دمو با پول مجازی، ریل با پول واقعی. حساب پیش‌فرض را با /mode عوض کنید."
 end
 
@@ -220,7 +231,7 @@ pub func Help(): str:
         "/stats: آمار ۲۴ ساعت گذشته\n" +
         "/balance: موجودی حساب\n" +
         "/price &lt;نماد&gt;: قیمت لحظه‌ای\n" +
-        "/symbols &lt;جست‌وجو&gt;: فهرست نمادهای کارگزار\n" +
+        "/symbols &lt;جست‌وجو&gt;: فهرست نمادهای کارگزار، از بیشترین نرخ پرداخت به کمترین\n" +
         "/status: وضعیت اتصال‌ها\n" +
         "/mode demo|real: تغییر حساب پیش‌فرض\n" +
         "/settings و /set &lt;کلید&gt; &lt;مقدار&gt;: تنظیمات\n" +
@@ -228,13 +239,15 @@ pub func Help(): str:
         "/id: نمایش شناسهٔ چت\n\n" +
         "<b>نمونهٔ دستور تک‌خطی</b>\n" +
         "<code>/order GBPAUD_otc buy 1.95320 tf=1m dur=60 amount=1 acc=demo</code>\n" +
-        "<code>/order EURUSD sell 1.08540 tf=1m exp=float candles=1 entry=next</code>\n\n" +
+        "<code>/order EURUSD sell 1.08540 tf=1m exp=float candles=1 entry=next</code>\n" +
+        "<code>/order EURUSD_otc buy 1.08540 payout=90</code>\n\n" +
         "<b>پارامترها</b>\n" +
         "<code>tf</code> تایم‌فریم · <code>chart</code> نوع چارت (candle/ha/line)\n" +
         "<code>entry</code> ورود: <code>touch</code> یا <code>next</code>\n" +
         "<code>exp</code> انقضا: <code>fixed</code> یا <code>float</code>\n" +
         "<code>dur</code> مدت ثابت · <code>candles</code> تعداد کندل\n" +
-        "<code>amount</code> مبلغ · <code>acc</code> حساب · <code>valid</code> اعتبار سفارش\n\n" +
+        "<code>amount</code> مبلغ · <code>acc</code> حساب · <code>valid</code> اعتبار سفارش\n" +
+        "<code>payout</code> حداقل نرخ پرداخت به درصد؛ اگر لحظهٔ ورود کمتر از آن بود، معامله زده نمی‌شود\n\n" +
         "مقدارهای زمانی را آزادانه بنویسید: <code>dur=90</code> · <code>dur=1m</code> · <code>valid=2h</code>\n" +
         "برای راهنمای کامل /start را بزنید."
 end

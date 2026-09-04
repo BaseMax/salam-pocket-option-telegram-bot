@@ -28,6 +28,7 @@ pub const EV_SETTLED := "settled"
 pub const EV_FAILED := "failed"
 pub const EV_EXPIRED := "expired"
 pub const EV_MISSED := "missed"
+pub const EV_SKIPPED := "skipped"
 pub const EV_SETTLE_LATE := "settlement_pending"
 pub const EV_AUTH_FAILED := "auth_failed"
 
@@ -147,7 +148,34 @@ func Finish(o: types.Order, status: str, note: str, kind: str, price: f64, detai
     Publish(kind, done, price, 0.0, detail)
 end
 
+func PayoutNote(min_payout: i64, payout: i64, has_payout: bool): str:
+    if !has_payout:
+        ret "the broker quoted no payout, and this order needs at least " + str.FromInt(min_payout) + "%"
+    end
+    ret "payout was " + str.FromInt(payout) + "%, under the " + str.FromInt(min_payout) + "% this order needs"
+end
+
+func PayoutDetail(min_payout: i64, payout: i64, has_payout: bool): str:
+    if !has_payout:
+        ret "کارگزار در این لحظه نرخ پرداخت این نماد را اعلام نکرد، پس شرط «حداقل " +
+            str.FromInt(min_payout) + "٪» قابل بررسی نبود."
+    end
+    ret "نرخ پرداخت این نماد در همان لحظه " + str.FromInt(payout) + "٪ بود و از حداقل " +
+        str.FromInt(min_payout) + "٪ شما کمتر است."
+end
+
 func Place(o: types.Order, entry_time: f64):
+    // The payout the broker quotes now, not the one it quoted when the order
+    // was written: it moves all day, so the floor is only worth anything if
+    // it is read in the second the trade would be sent.
+    mut has_payout := false
+    payout := Payout(o.account_mode, o.symbol, has_payout)
+    if !PayoutAllows(o.min_payout, payout, has_payout):
+        Finish(o, types.ST_SKIPPED, PayoutNote(o.min_payout, payout, has_payout),
+            EV_SKIPPED, o.triggered_price, PayoutDetail(o.min_payout, payout, has_payout))
+        ret
+    end
+
     idx := FindAttachment(o.id)
     if idx < 0:
         Finish(o, types.ST_FAILED, "no live session for this order", EV_FAILED, 0.0, "no live session for this order")
@@ -321,6 +349,27 @@ func CheckAuth():
         end
         i = i + 1
     end
+end
+
+// What the broker is paying for this symbol right now, if it has said.
+pub func Payout(mode: str, symbol: str, has_payout &: bool): i64:
+    a := symbols.Find(broker.Assets(mode), symbol)
+    has_payout = a.symbol.len() > 0 && a.has_payout
+    if !has_payout: ret 0 as i64 end
+    ret a.payout
+end
+
+/*
+ * Whether a payout clears an order's floor.
+ *
+ * An order with no floor takes whatever the broker is paying. One with a
+ * floor and no quote to check it against does not trade: an unverifiable
+ * condition is a condition that was not met.
+ */
+pub func PayoutAllows(min_payout: i64, payout: i64, has_payout: bool): bool:
+    if min_payout <= 0: ret true end
+    if !has_payout: ret false end
+    ret payout >= min_payout
 end
 
 // Which way the price has to travel for this order to be a crossing rather

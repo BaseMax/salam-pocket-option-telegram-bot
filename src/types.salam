@@ -40,6 +40,9 @@ pub const ST_WON := "won"
 pub const ST_LOST := "lost"
 pub const ST_DRAW := "draw"
 pub const ST_CANCELLED := "cancelled"
+// The price arrived but the broker's payout was under the order's floor,
+// so nothing was sent.
+pub const ST_SKIPPED := "skipped"
 pub const ST_FAILED := "failed"
 pub const ST_EXPIRED := "expired"
 
@@ -61,6 +64,9 @@ pub struct OrderSpec:
     pub account_mode: str = MODE_DEMO
     // 0 means the order waits for its price forever.
     pub valid_for_seconds: i64 = 0
+    // The payout the broker must be quoting when the trade is sent, in
+    // percent. 0 means the order does not care.
+    pub min_payout: i64 = 0
 end
 
 // A stored order: the spec plus everything the engine learns about it.
@@ -85,6 +91,10 @@ pub struct Order:
     pub candle_count: i64 = 1
     pub timeframe_seconds: i64 = 60
     pub chart_type: str = CHART_CANDLE
+
+    // Checked against the broker's live payout the moment the trade would
+    // be sent, not when the order was written. 0 means no condition.
+    pub min_payout: i64 = 0
 
     pub status: str = ST_PENDING
     // The market price when the order was created, which decides which way

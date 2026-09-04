@@ -131,7 +131,7 @@ Telegram take precedence and persist in the database.
 | `/stats` | Wins / losses / net P&L over the last 24h |
 | `/balance [demo\|real]` | Account balance |
 | `/price <symbol>` | Live price |
-| `/symbols [query]` | Broker symbol list, or a search through it |
+| `/symbols [query]` | Broker symbol list, or a search through it, sorted by payout, split across as many messages as it takes |
 | `/status` | Session health, endpoints, broker clock offset |
 | `/mode demo\|real` | Default account |
 | `/settings`, `/set <key> <value>` | Defaults for new orders |
@@ -148,6 +148,7 @@ Telegram take precedence and persist in the database.
 ```
 /order GBPAUD_otc buy 1.95320 tf=1m dur=60 amount=1 acc=demo
 /order EURUSD sell 1.08540 tf=1m exp=float candles=1 entry=next
+/order EURUSD_otc buy 1.08540 payout=90
 ```
 
 | Key | Values | Default |
@@ -161,6 +162,7 @@ Telegram take precedence and persist in the database.
 | `amount` | USD | `/set amount` |
 | `acc` | `demo`, `real` | `/mode` |
 | `valid` | `30m`, abandon if never triggered | none |
+| `payout` | `90`, minimum payout percent at the moment of the trade | `/set payout` |
 
 Every value is read leniently. Durations accept any unit spelling in either language and any
 case: `90`, `1m`, `1M`, `2 minutes`, `۳۰ دقیقه`, `1h 30m`, `2 ساعت و ۱۵ دقیقه`, `3 days`, `1 ماه`
@@ -241,6 +243,13 @@ pending ──price touches trigger──┬─ touch mode ───────
 
 `pending` also ends in `cancelled` (by you) or `expired` (validity elapsed); any step can end in
 `failed` if the broker refuses the trade.
+
+An order carrying a payout floor (`payout=90`, or `/set payout 90`) has one more way out. The
+percentage the broker prints beside a symbol moves all day, so it is read in the second the trade
+would be sent, not when the order was written: at or above the floor the trade goes, and below it
+nothing is sent and the order ends `skipped` with a message saying the price arrived but the
+condition did not hold. A floor the broker quotes no payout against counts as not met — an
+unverifiable condition is not a satisfied one.
 
 ---
 
@@ -330,6 +339,7 @@ notable ones:
 | `PO_DEMO_SERVERS` / `PO_REAL_SERVERS` | built-in list | `url` or `url|origin`, comma separated |
 | `PO_SERVER_TIME_OFFSET` | `7200` | Starting guess for the broker clock offset |
 | `MIN_DURATION_SECONDS` | `5` | Broker floor for a binary option |
+| `DEFAULT_MIN_PAYOUT_PERCENT` | `0` | Payout floor new orders start with; `0` means no condition |
 | `SESSION_IDLE_TTL_SECONDS` | `60` | How long a session lingers after its last order settles |
 | `DISPLAY_TIMEZONE_OFFSET_MINUTES` | `210` | Minutes east of UTC for every timestamp shown |
 ## Development

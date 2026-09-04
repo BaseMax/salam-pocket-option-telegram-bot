@@ -53,6 +53,15 @@ pub func SetCandles(count: i64):
     store.PutSetting("candles", str.FromInt(count))
 end
 
+// The payout floor new orders start with, in percent; 0 turns the check off.
+pub func MinPayout(): i64:
+    ret store.GetSettingInt("min_payout", _config.default_min_payout)
+end
+
+pub func SetMinPayout(percent: i64):
+    store.PutSetting("min_payout", str.FromInt(percent))
+end
+
 pub func Chart(): str:
     ret store.GetSetting("chart", types.CHART_CANDLE)
 end

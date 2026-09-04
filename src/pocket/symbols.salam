@@ -45,6 +45,23 @@ func Clean(raw: str): str:
     ret str.Trim(out)
 end
 
+// Puts a list in reading order, in place. An insertion sort: the lists here
+// are a few hundred entries at most, and equal ones keep the order the
+// broker sent them in.
+func SortRanked(list: Vector<Asset>):
+    mut j := 1
+    while j < list.len():
+        current := list.get(j)
+        mut k := j - 1
+        while k >= 0 && Ranks(current, list.get(k)):
+            list.set(k + 1, list.get(k))
+            k = k - 1
+        end
+        list.set(k + 1, current)
+        j = j + 1
+    end
+end
+
 pub func IsOtc(symbol: str): bool:
     up := str.Upper(symbol)
     if up.len() < 4: ret false end
@@ -151,8 +168,8 @@ pub func Resolve(raw: str, assets: Vector<Asset>, status &: str, matched &: Asse
     ret name
 end
 
-// Assets worth offering when nothing matched, best first.
-pub func Suggest(name: str, assets: Vector<Asset>): Vector<Asset>:
+// Every asset whose symbol or name has this text in it, best payout first.
+pub func Search(name: str, assets: Vector<Asset>): Vector<Asset>:
     base := Bare(name)
     mut out := Vector {} as Vector<Asset>
     if base.len() < 2: ret out end
@@ -168,19 +185,27 @@ pub func Suggest(name: str, assets: Vector<Asset>): Vector<Asset>:
         i = i + 1
     end
 
-    // insertion sort: the list is short and this keeps the order stable
-    mut j := 1
-    while j < out.len():
-        current := out.get(j)
-        mut k := j - 1
-        while k >= 0 && Ranks(current, out.get(k)):
-            out.set(k + 1, out.get(k))
-            k = k - 1
-        end
-        out.set(k + 1, current)
-        j = j + 1
-    end
+    SortRanked(out)
+    ret out
+end
 
+// Everything the account can trade right now, fattest payout first.
+pub func Tradable(assets: Vector<Asset>): Vector<Asset>:
+    mut out := Vector {} as Vector<Asset>
+    mut i := 0
+    while i < assets.len():
+        a := assets.get(i)
+        if a.is_open: out.push(a) end
+        i = i + 1
+    end
+    SortRanked(out)
+    ret out
+end
+
+// Assets worth offering when nothing matched, best first. The same search,
+// cut to what fits in a message that is meant to be a hint.
+pub func Suggest(name: str, assets: Vector<Asset>): Vector<Asset>:
+    mut out := Search(name, assets)
     while out.len() > MAX_SUGGESTIONS: out.remove_at(out.len() - 1) end
     ret out
 end

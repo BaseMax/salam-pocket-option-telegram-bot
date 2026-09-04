@@ -24,6 +24,11 @@ import tgapi "tgapi.salam"
 import wizard "wizard.salam"
 import ssid "../pocket/ssid.salam"
 
+// A symbol listing goes out in pieces of this size. Telegram's own ceiling
+// is 4096 characters; the gap absorbs the header and the closing line.
+const SYMBOL_PAGE_CHARS := 3400
+const SYMBOL_MAX_PAGES := 10
+
 mut _config := config.Config {}
 mut _bot := bot.Bot {}
 mut _offset := 0 as i64
@@ -154,6 +159,7 @@ func FreshDraft(): wizard.Draft:
     d.candle_count = settings.Candles()
     d.amount = settings.Amount()
     d.valid_for_seconds = 0 as i64
+    d.min_payout = settings.MinPayout()
     ret d
 end
 
@@ -167,6 +173,7 @@ func SpecDefaults(): types.OrderSpec:
     spec.duration_seconds = settings.Duration()
     spec.candle_count = settings.Candles()
     spec.amount = settings.Amount()
+    spec.min_payout = settings.MinPayout()
     ret spec
 end
 
@@ -218,6 +225,30 @@ func CheckSymbol(mode: str, raw: str, problem &: str, note &: str): str:
     ret matched.symbol
 end
 
+/*
+ * A word about the payout floor when the order is written, or "".
+ *
+ * The number that decides anything is the one read at the moment of the
+ * trade, not this one; it is here so a floor that today's market cannot
+ * reach is visible now rather than at the trigger.
+ */
+func PayoutNote(mode: str, symbol: str, min_payout: i64): str:
+    if min_payout <= 0: ret "" end
+
+    mut has_payout := false
+    payout := engine.Payout(mode, symbol, has_payout)
+    if !has_payout:
+        ret "ℹ️ حداقل نرخ پرداخت " + str.FromInt(min_payout) +
+            "٪ ثبت شد. کارگزار الان نرخی برای این نماد اعلام نکرده؛ اگر لحظهٔ برخورد هم اعلام نکند، معامله زده نمی‌شود."
+    end
+    if payout < min_payout:
+        ret "⚠️ نرخ پرداخت این نماد الان " + str.FromInt(payout) + "٪ است، کمتر از حداقل " +
+            str.FromInt(min_payout) + "٪ شما. اگر لحظهٔ برخورد هم همین باشد، معامله زده نمی‌شود."
+    end
+    ret "✅ نرخ پرداخت این نماد الان " + str.FromInt(payout) + "٪ است و شرط حداقل " +
+        str.FromInt(min_payout) + "٪ را دارد؛ لحظهٔ برخورد دوباره بررسی می‌شود."
+end
+
 // Validates, registers and confirms one order, whatever screen it came from.
 func SubmitOrder(chat_id: i64, spec: types.OrderSpec):
     problem := config.CheckLimits(_config, spec.amount, spec.expiry_mode, spec.duration_seconds,
@@ -256,8 +287,15 @@ func SubmitOrder(chat_id: i64, spec: types.OrderSpec):
     o.candle_count = spec.candle_count
     o.timeframe_seconds = spec.timeframe_seconds
     o.chart_type = spec.chart_type
+    o.min_payout = spec.min_payout
     if spec.valid_for_seconds > 0:
         o.valid_until = timex.NowSeconds() + (spec.valid_for_seconds as f64)
+    end
+
+    payout_note := PayoutNote(spec.account_mode, symbol, spec.min_payout)
+    if payout_note.len() > 0:
+        if symbol_note.len() > 0: symbol_note = symbol_note + "\n" end
+        symbol_note = symbol_note + payout_note
     end
 
     saved := engine.CreateOrder(o)
@@ -385,6 +423,13 @@ func CmdPrice(chat_id: i64, args: str):
     tgapi.Finish(_bot, chat_id, notice, "💹 <b>" + texts.EscapeHtml(symbol) + "</b> (" + texts.AccountLabel(mode) + "): <code>" + timex.FormatPrice(price) + "</code>")
 end
 
+// What /symbols lists: the account's open markets, or everything a search
+// matched. Either way the fattest payout leads.
+func Listing(assets: Vector<symbols.Asset>, query: str): Vector<symbols.Asset>:
+    if query.len() == 0: ret symbols.Tradable(assets) end
+    ret symbols.Search(symbols.Normalize(query), assets)
+end
+
 func CmdSymbols(chat_id: i64, args: str):
     query := str.Trim(args)
     mode := settings.Mode()
@@ -396,45 +441,45 @@ func CmdSymbols(chat_id: i64, args: str):
         ret
     end
 
-    mut matched := Vector {} as Vector<symbols.Asset>
+    mut matched := Listing(assets, query)
     defer matched.free()
-    if query.len() == 0:
-        mut i := 0
-        while i < assets.len():
-            a := assets.get(i)
-            if a.is_open: matched.push(a) end
-            i = i + 1
-        end
-    else:
-        mut found := symbols.Suggest(symbols.Normalize(query), assets)
-        mut i := 0
-        while i < found.len():
-            matched.push(found.get(i))
-            i = i + 1
-        end
-        found.free()
-    end
 
-    mut header := "نمادهای باز حساب " + texts.AccountLabel(mode)
-    if query.len() > 0: header = "نتیجهٔ جست‌وجوی <code>" + texts.EscapeHtml(query) + "</code>" end
+    mut header := "نمادهای باز حساب " + texts.AccountLabel(mode) + "، از بیشترین نرخ پرداخت"
+    if query.len() > 0:
+        header = "نتیجهٔ جست‌وجوی <code>" + texts.EscapeHtml(query) + "</code>، از بیشترین نرخ پرداخت"
+    end
     header = header + " (" + str.FromInt(matched.len() as i64) + " مورد)"
 
-    mut body := "چیزی پیدا نشد."
-    if matched.len() > 0:
-        body = ""
-        mut shown := matched.len()
-        if shown > 30: shown = 30 end
-        mut i := 0
-        while i < shown:
-            if i > 0: body = body + "\n" end
-            body = body + "• " + texts.AssetLine(matched.get(i))
-            i = i + 1
-        end
-        if matched.len() > shown:
-            body = body + "\n\n… و " + str.FromInt((matched.len() - shown) as i64) + " مورد دیگر."
-        end
+    if matched.len() == 0:
+        tgapi.Finish(_bot, chat_id, notice, "📋 <b>" + header + "</b>\n\nچیزی پیدا نشد.")
+        ret
     end
-    tgapi.Finish(_bot, chat_id, notice, "📋 <b>" + header + "</b>\n\n" + body)
+
+    mut shown := 0
+    mut pages := AssetPages(matched, shown)
+    defer pages.free()
+
+    mut i := 0
+    while i < pages.len():
+        mut title := header
+        if pages.len() > 1:
+            title = header + "\nصفحهٔ " + str.FromInt((i + 1) as i64) + " از " + str.FromInt(pages.len() as i64)
+        end
+        mut text := "📋 <b>" + title + "</b>\n\n" + pages.get(i)
+        if i == pages.len() - 1 && shown < matched.len():
+            text = text + "\n\n… و " + str.FromInt((matched.len() - shown) as i64) +
+                " مورد دیگر که در این پیام‌ها جا نشد. بخشی از نام را جلوی دستور بنویسید تا کوتاه‌تر شود: " +
+                "<code>/symbols eur</code>"
+        end
+
+        // The first page replaces the "working…" notice; the rest follow it.
+        if i == 0:
+            tgapi.Finish(_bot, chat_id, notice, text)
+        else:
+            _m := tgapi.Send(_bot, chat_id, text, "")
+        end
+        i = i + 1
+    end
 end
 
 func CmdStatus(chat_id: i64):
@@ -484,6 +529,7 @@ func CmdSettings(chat_id: i64):
     text = text + "<code>chart</code> نوع چارت: " + texts.ChartLabel(settings.Chart()) + "\n"
     text = text + "<code>entry</code> نحوهٔ ورود: " + texts.TriggerLabel(settings.Entry()) + "\n"
     text = text + "<code>expiry</code> نوع انقضا: " + texts.ExpiryLabel(settings.Expiry()) + "\n"
+    text = text + "<code>payout</code> حداقل نرخ پرداخت: " + texts.PayoutLabel(settings.MinPayout()) + "\n"
     mut notify := "خاموش"
     if settings.NotifyBalance(): notify = "روشن" end
     text = text + "<code>balance</code> نمایش موجودی در اعلان‌ها: " + notify + "\n\n"
@@ -493,7 +539,7 @@ func CmdSettings(chat_id: i64):
     mut real := "❌ ثبت نشده"
     if settings.HasCredentials(types.MODE_REAL): real = "✅ ثبت شده" end
     text = text + "نشست دمو: " + demo + "\nنشست ریل: " + real + "\n\n"
-    text = text + "تغییر: <code>/set amount 5</code> · <code>/set tf 1m</code> · <code>/set balance off</code>"
+    text = text + "تغییر: <code>/set amount 5</code> · <code>/set tf 1m</code> · <code>/set payout 90</code> · <code>/set balance off</code>"
     _m := tgapi.Send(_bot, chat_id, text, "")
 end
 
@@ -553,6 +599,12 @@ func CmdSet(chat_id: i64, args: str):
     else key == "expiry":
         mode := parse.ExpiryMode(value)
         if mode.len() == 0: problem = "نوع انقضا نامعتبر (fixed / float)." else: settings.SetExpiry(mode) end
+
+    else key == "payout" || key == "minpayout":
+        percent := parse.Percent(value)
+        if percent < 0: problem = "حداقل نرخ پرداخت نامعتبر: عددی بین ۰ تا ۱۰۰ بدهید، ۰ یعنی بدون شرط."
+        else: settings.SetMinPayout(percent)
+        end
 
     else key == "balance":
         on_off := parse.OnOff(value)
@@ -822,6 +874,42 @@ pub func Dispatch(u: bot.Update):
     end
 end
 
+/*
+ * The list, cut into message-sized pieces.
+ *
+ * Telegram takes 4096 characters at a time and a hundred-odd symbols are
+ * three times that, so a whole account no longer arrives as thirty rows and
+ * an apology - it arrives as three or four messages. `shown` counts the
+ * assets that made it in, which is fewer than the list only when a search
+ * matched more than SYMBOL_MAX_PAGES pages of them.
+ *
+ * Public so the cutting can be checked against a long list offline, the way
+ * EventText is: a page that quietly loses a symbol is the whole bug this
+ * replaced.
+ */
+pub func AssetPages(list: Vector<symbols.Asset>, shown &: int): Vector<str>:
+    mut pages := Vector {} as Vector<str>
+    shown = 0
+    mut body := ""
+
+    mut i := 0
+    while i < list.len():
+        line := "• " + texts.AssetLine(list.get(i))
+        if body.len() > 0 && body.len() + line.len() + 1 > SYMBOL_PAGE_CHARS:
+            pages.push(body)
+            body = ""
+            if pages.len() >= SYMBOL_MAX_PAGES: ret pages end
+        end
+        if body.len() > 0: body = body + "\n" end
+        body = body + line
+        shown = shown + 1
+        i = i + 1
+    end
+
+    if body.len() > 0: pages.push(body) end
+    ret pages
+end
+
 pub func EventText(e: engine.Event): str:
     o := e.order
     head := texts.Headline(o)
@@ -860,6 +948,11 @@ pub func EventText(e: engine.Event): str:
     if e.kind == engine.EV_MISSED:
         ret "🚫 <b>فرصت از دست رفت، سفارش لغو شد</b>\n\n" + head + "\n" + texts.EscapeHtml(e.detail) +
             "\nقیمت فعلی: <code>" + timex.FormatPrice(e.price) + "</code>\nبرای ورود با قیمت تازه، سفارش جدید ثبت کنید."
+    end
+    if e.kind == engine.EV_SKIPPED:
+        ret "🚫 <b>قیمت به هدف رسید، ولی معامله زده نشد</b>\n\n" + head + "\nقیمت برخورد: <code>" +
+            timex.FormatPrice(e.price) + "</code>\n" + texts.EscapeHtml(e.detail) +
+            "\n\nاین سفارش بسته شد. اگر می‌خواهید دوباره منتظر همین قیمت بماند، سفارش تازه‌ای ثبت کنید."
     end
     if e.kind == engine.EV_SETTLE_LATE:
         ret "⏱ <b>نتیجهٔ معامله هنوز نرسیده</b>\n\n" + head +
