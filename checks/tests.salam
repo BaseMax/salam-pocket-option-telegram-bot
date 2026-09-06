@@ -14,6 +14,7 @@ import store "../src/storage/store.salam"
 import jsonx "../src/util/jsonx.salam"
 import ssid "../src/pocket/ssid.salam"
 import broker "../src/pocket/broker.salam"
+import wizard "../src/telegram/wizard.salam"
 import texts "../src/telegram/texts.salam"
 import config "../src/config.salam"
 import settings "../src/storage/settings.salam"
@@ -719,6 +720,64 @@ func TestPolling():
     store.Close()
 end
 
+/*
+ * The /new panel, driven the way Telegram drives it.
+ *
+ * Canned updates through the real dispatcher: the taps land on the real
+ * keyboard handler and the panel is rendered on every one of them. The
+ * conditions are only worth anything if the buttons that set them are
+ * wired to the order that carries them, and this is the seam where a
+ * button that renders but sets nothing would show up.
+ */
+func TestPanel():
+    Truthy(store.Open(":memory:"), "a database for the panel test")
+    mut c := config.Config {}
+    c.admin_ids = "5123456789"
+    settings.Init(c)
+    tgbot.UseFakeBot()
+    tgbot.Configure(c)
+
+    chat := "5123456789"
+    _open := tgbot.Apply(`[{"update_id":100,"message":{"message_id":1,"date":0,"chat":{"id":` + chat +
+        `,"type":"private"},"text":"/new"}}]`)
+    Truthy(wizard.Has(5123456789 as i64), "the panel is open")
+
+    // Every tap goes through the dispatcher, so the panel is re-rendered
+    // each time and a broken render would take the test with it.
+    _menu := tgbot.Apply(`[{"update_id":101,"callback_query":{"id":"q1","data":"w:gap","message":{"message_id":2,"date":0,"chat":{"id":` + chat + `,"type":"private"},"text":"panel"}}}]`)
+    _c1 := tgbot.Apply(`[{"update_id":102,"callback_query":{"id":"q2","data":"w:gapc:above","message":{"message_id":2,"date":0,"chat":{"id":` + chat + `,"type":"private"},"text":"panel"}}}]`)
+    _x1 := tgbot.Apply(`[{"update_id":103,"callback_query":{"id":"q3","data":"w:gapx:below","message":{"message_id":2,"date":0,"chat":{"id":` + chat + `,"type":"private"},"text":"panel"}}}]`)
+
+    mut spec := wizard.Spec(5123456789 as i64)
+    EqStr(spec.gap_confirm, "above", "the confirm row wrote to the order")
+    EqStr(spec.gap_cancel, "below", "and the cancel row is its own condition")
+
+    _c2 := tgbot.Apply(`[{"update_id":104,"callback_query":{"id":"q4","data":"w:gapc:equal","message":{"message_id":2,"date":0,"chat":{"id":` + chat + `,"type":"private"},"text":"panel"}}}]`)
+    spec = wizard.Spec(5123456789 as i64)
+    EqStr(spec.gap_confirm, "equal,above", "a second state joins the first")
+
+    _c3 := tgbot.Apply(`[{"update_id":105,"callback_query":{"id":"q5","data":"w:gapc:above","message":{"message_id":2,"date":0,"chat":{"id":` + chat + `,"type":"private"},"text":"panel"}}}]`)
+    spec = wizard.Spec(5123456789 as i64)
+    EqStr(spec.gap_confirm, "equal", "and tapping it again takes it back off")
+    EqStr(spec.gap_cancel, "below", "without touching the other condition")
+
+    // The typed field: the button opens the question, the next message answers it.
+    _ask := tgbot.Apply(`[{"update_id":106,"callback_query":{"id":"q6","data":"w:tail","message":{"message_id":2,"date":0,"chat":{"id":` + chat + `,"type":"private"},"text":"panel"}}}]`)
+    Truthy(wizard.IsAwaiting(5123456789 as i64), "the panel is waiting for the answer")
+    _ans := tgbot.Apply(`[{"update_id":107,"message":{"message_id":3,"date":0,"chat":{"id":` + chat + `,"type":"private"},"text":"۷"}}]`)
+    spec = wizard.Spec(5123456789 as i64)
+    EqInt(spec.block_last_seconds, 7, "a Persian numeral answers the candle tail")
+    Falsy(wizard.IsAwaiting(5123456789 as i64), "and the question is done")
+
+    _clear := tgbot.Apply(`[{"update_id":108,"callback_query":{"id":"q7","data":"w:gapclear","message":{"message_id":2,"date":0,"chat":{"id":` + chat + `,"type":"private"},"text":"panel"}}}]`)
+    spec = wizard.Spec(5123456789 as i64)
+    EqStr(spec.gap_confirm, "", "clearing drops the confirm condition")
+    EqStr(spec.gap_cancel, "", "and the cancel one with it")
+
+    wizard.Close(5123456789 as i64)
+    store.Close()
+end
+
 func main:
     TestDurations()
     TestFormatting()
@@ -740,5 +799,6 @@ func main:
     TestNotifications()
     TestSymbolPages()
     TestPolling()
+    TestPanel()
     os.Exit(testing.Summary())
 end
