@@ -24,6 +24,16 @@ pub const CHART_CANDLE := "candle"
 pub const CHART_HEIKIN_ASHI := "heikin_ashi"
 pub const CHART_LINE := "line"
 
+/*
+ * The candle gap: where this candle opened against the close of the one
+ * before it. The broker draws its candles from the same tick stream, so the
+ * two are not always the same price, and a trader who cares which way the
+ * market jumped over the boundary cares about exactly these three.
+ */
+pub const GAP_ABOVE := "above"
+pub const GAP_EQUAL := "equal"
+pub const GAP_BELOW := "below"
+
 // Which side the market sat on when the order was created, so a trigger is
 // a crossing and never mere proximity.
 pub const SIDE_ABOVE := "above"
@@ -67,6 +77,13 @@ pub struct OrderSpec:
     // The payout the broker must be quoting when the trade is sent, in
     // percent. 0 means the order does not care.
     pub min_payout: i64 = 0
+    // Refuse a floating trade that would start in the last N seconds of its
+    // candle, where there is no candle left to trade. 0 means never refuse.
+    pub block_last_seconds: i64 = 0
+    // The candle gap conditions, each a subset of above/equal/below: one the
+    // gap must be in for the trade to go, one that calls it off.
+    pub gap_confirm: str = ""
+    pub gap_cancel: str = ""
 end
 
 // A stored order: the spec plus everything the engine learns about it.
@@ -92,9 +109,12 @@ pub struct Order:
     pub timeframe_seconds: i64 = 60
     pub chart_type: str = CHART_CANDLE
 
-    // Checked against the broker's live payout the moment the trade would
-    // be sent, not when the order was written. 0 means no condition.
+    // All three are read the moment the trade would be sent, not when the
+    // order was written; 0 and "" mean the order does not ask.
     pub min_payout: i64 = 0
+    pub block_last_seconds: i64 = 0
+    pub gap_confirm: str = ""
+    pub gap_cancel: str = ""
 
     pub status: str = ST_PENDING
     // The market price when the order was created, which decides which way
@@ -119,6 +139,44 @@ pub struct Order:
 
     pub created_at: f64 = 0.0
     pub updated_at: f64 = 0.0
+end
+
+// A gap set in one spelling, whichever order the relations arrived in.
+pub func GapListMake(equal: bool, above: bool, below: bool): str:
+    mut out := ""
+    if equal: out = GAP_EQUAL end
+    if above:
+        if out.len() > 0: out = out + "," end
+        out = out + GAP_ABOVE
+    end
+    if below:
+        if out.len() > 0: out = out + "," end
+        out = out + GAP_BELOW
+    end
+    ret out
+end
+
+pub func GapListHas(list: str, relation: str): bool:
+    if list.len() == 0 || relation.len() == 0: ret false end
+    mut parts := list.split(",")
+    defer parts.free()
+    mut i := 0
+    while i < parts.len():
+        if parts.get(i) == relation: ret true end
+        i = i + 1
+    end
+    ret false
+end
+
+// The set with one relation switched on or off, for a panel button.
+pub func GapListToggle(list: str, relation: str): str:
+    mut equal := GapListHas(list, GAP_EQUAL)
+    mut above := GapListHas(list, GAP_ABOVE)
+    mut below := GapListHas(list, GAP_BELOW)
+    if relation == GAP_EQUAL: equal = !equal end
+    if relation == GAP_ABOVE: above = !above end
+    if relation == GAP_BELOW: below = !below end
+    ret GapListMake(equal, above, below)
 end
 
 pub func IsActive(status: str): bool:

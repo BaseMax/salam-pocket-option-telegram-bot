@@ -78,7 +78,7 @@ pub func StatusLabel(status: str): str:
     if status == types.ST_LOST: ret "🛑 باخت" end
     if status == types.ST_DRAW: ret "🟰 مساوی" end
     if status == types.ST_CANCELLED: ret "⚪️ لغو شده" end
-    if status == types.ST_SKIPPED: ret "🚫 انجام نشد (نرخ پرداخت کم)" end
+    if status == types.ST_SKIPPED: ret "🚫 انجام نشد (شرط‌ها برقرار نبود)" end
     if status == types.ST_FAILED: ret "⚠️ ناموفق" end
     ret "⌛️ منقضی شده"
 end
@@ -96,6 +96,46 @@ end
 pub func PayoutLabel(min_payout: i64): str:
     if min_payout <= 0: ret "بدون شرط" end
     ret str.FromInt(min_payout) + "٪ و بالاتر"
+end
+
+// The three candle-gap states as the user picks them: where this candle
+// opened against the close of the one before it.
+pub func GapWord(relation: str): str:
+    if relation == types.GAP_ABOVE: ret "بیشتر" end
+    if relation == types.GAP_BELOW: ret "کمتر" end
+    ret "برابر"
+end
+
+pub func GapListLabel(list: str): str:
+    if list.len() == 0: ret "—" end
+    mut out := ""
+    if types.GapListHas(list, types.GAP_EQUAL): out = GapWord(types.GAP_EQUAL) end
+    if types.GapListHas(list, types.GAP_ABOVE):
+        if out.len() > 0: out = out + " یا " end
+        out = out + GapWord(types.GAP_ABOVE)
+    end
+    if types.GapListHas(list, types.GAP_BELOW):
+        if out.len() > 0: out = out + " یا " end
+        out = out + GapWord(types.GAP_BELOW)
+    end
+    ret out
+end
+
+// The whole gap condition on one line, or "" when the order has none.
+pub func GapSummary(confirm: str, cancel: str): str:
+    if confirm.len() == 0 && cancel.len() == 0: ret "" end
+    mut out := ""
+    if confirm.len() > 0: out = "تایید: " + GapListLabel(confirm) end
+    if cancel.len() > 0:
+        if out.len() > 0: out = out + " · " end
+        out = out + "کنسل: " + GapListLabel(cancel)
+    end
+    ret out
+end
+
+pub func TailLabel(seconds: i64): str:
+    if seconds <= 0: ret "بدون شرط" end
+    ret str.FromInt(seconds) + " ثانیهٔ پایانی کندل"
 end
 
 pub func Headline(o: types.Order): str:
@@ -120,6 +160,13 @@ pub func RenderOrder(o: types.Order, offset_minutes: i64, compact: bool): str:
     out = out + "مبلغ: " + timex.FormatMoney(o.amount) + " · حساب: " + AccountLabel(o.account_mode)
     if o.min_payout > 0:
         out = out + "\nحداقل نرخ پرداخت: <b>" + PayoutLabel(o.min_payout) + "</b>"
+    end
+    if o.block_last_seconds > 0 && o.expiry_mode == types.EXPIRY_FLOATING:
+        out = out + "\nورود ممنوع در: <b>" + TailLabel(o.block_last_seconds) + "</b>"
+    end
+    gap := GapSummary(o.gap_confirm, o.gap_cancel)
+    if gap.len() > 0:
+        out = out + "\nگپ کندلی — " + gap
     end
 
     if !compact:
@@ -216,6 +263,11 @@ pub func TradeGuide(): str:
         "• شناور: " + ExpiryHelp(types.EXPIRY_FLOATING) + "\n" +
         "مثال: تایم‌فریم ۱ دقیقه، انقضای شناور، ۱ کندل ← اگر در ثانیهٔ ۲۳ وارد شوید، معامله در پایان همان دقیقه بسته می‌شود.\n\n" +
         "<b>اعتبار سفارش</b> — تا چه مدت منتظر رسیدن قیمت به هدف بمانیم. <code>0</code> یعنی بدون محدودیت.\n\n" +
+        "<b>گپ کندلی</b> — عدد اپن کندل فعلی با کلوز کندل قبلی مقایسه می‌شود و سه حالت دارد: <b>برابر</b>، <b>بیشتر</b> یا <b>کمتر</b>. دو شرط جدا روی همین سه حالت می‌گذارید:\n" +
+        "• <b>تایید</b> — معامله فقط وقتی زده شود که گپ یکی از حالت‌های انتخابی باشد.\n" +
+        "• <b>کنسل</b> — اگر گپ یکی از حالت‌های انتخابی بود، معامله زده نشود.\n" +
+        "هر کدام را می‌توانید خالی بگذارید، یک حالت یا چند حالت انتخاب کنید. اگر حالتی هم در تایید و هم در کنسل باشد، کنسل مقدم است. این مقایسه دقیقاً در لحظهٔ ورود انجام می‌شود.\n\n" +
+        "<b>ورود در ثانیه‌های پایانی کندل</b> — در انقضای شناور، معامله‌ای که مثلاً ۳ ثانیه به پایان کندل باز شود عملاً معاملهٔ ۳ ثانیه‌ای است. با این گزینه چند ثانیهٔ پایانی کندل بسته می‌شود و اگر قیمت در آن بازه به هدف برسد، معامله زده نمی‌شود. پیش‌فرض ۵ ثانیه؛ <code>0</code> یعنی خاموش.\n\n" +
         "<b>حداقل نرخ پرداخت</b> — درصدی که کارگزار جلوی هر نماد می‌نویسد و مدام تغییر می‌کند. اگر برای سفارش عددی بگذارید، ربات دقیقاً در همان لحظه‌ای که قیمت به هدف می‌رسد نرخ را می‌خواند: اگر برابر یا بیشتر از عدد شما بود معامله را می‌زند، وگرنه نمی‌زند و فقط خبر می‌دهد که قیمت رسید ولی شرط برقرار نبود. <code>0</code> یعنی این شرط را نگذار.\n\n" +
         "<b>حساب</b> — دمو با پول مجازی، ریل با پول واقعی. حساب پیش‌فرض را با /mode عوض کنید."
 end
@@ -240,14 +292,17 @@ pub func Help(): str:
         "<b>نمونهٔ دستور تک‌خطی</b>\n" +
         "<code>/order GBPAUD_otc buy 1.95320 tf=1m dur=60 amount=1 acc=demo</code>\n" +
         "<code>/order EURUSD sell 1.08540 tf=1m exp=float candles=1 entry=next</code>\n" +
-        "<code>/order EURUSD_otc buy 1.08540 payout=90</code>\n\n" +
+        "<code>/order EURUSD_otc buy 1.08540 payout=90 tail=5</code>\n" +
+        "<code>/order EURUSD buy 1.08540 exp=float gapcancel=کمتر,برابر</code>\n\n" +
         "<b>پارامترها</b>\n" +
         "<code>tf</code> تایم‌فریم · <code>chart</code> نوع چارت (candle/ha/line)\n" +
         "<code>entry</code> ورود: <code>touch</code> یا <code>next</code>\n" +
         "<code>exp</code> انقضا: <code>fixed</code> یا <code>float</code>\n" +
         "<code>dur</code> مدت ثابت · <code>candles</code> تعداد کندل\n" +
         "<code>amount</code> مبلغ · <code>acc</code> حساب · <code>valid</code> اعتبار سفارش\n" +
-        "<code>payout</code> حداقل نرخ پرداخت به درصد؛ اگر لحظهٔ ورود کمتر از آن بود، معامله زده نمی‌شود\n\n" +
+        "<code>payout</code> حداقل نرخ پرداخت به درصد؛ اگر لحظهٔ ورود کمتر از آن بود، معامله زده نمی‌شود\n" +
+        "<code>tail</code> ثانیه‌های پایانی کندل که در آن‌ها معاملهٔ شناور زده نشود (مثلاً <code>tail=5</code>)\n" +
+        "<code>gapconfirm</code> و <code>gapcancel</code> گپ کندلی: <code>برابر</code> · <code>بیشتر</code> · <code>کمتر</code>\n\n" +
         "مقدارهای زمانی را آزادانه بنویسید: <code>dur=90</code> · <code>dur=1m</code> · <code>valid=2h</code>\n" +
         "برای راهنمای کامل /start را بزنید."
 end

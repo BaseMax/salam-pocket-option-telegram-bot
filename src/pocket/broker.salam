@@ -141,6 +141,21 @@ pub struct Session:
     pub has_balance: bool = false
     pub last_player_state: f64 = 0.0
 
+    /*
+     * The candle being drawn right now, aggregated from the ticks above.
+     *
+     * The broker sends no OHLC series, so the only way to know where this
+     * candle opened against the last one's close is to watch the boundary
+     * go by. `has_previous_close` is false until we have actually seen one
+     * end and the next begin without the stream dropping in between: a
+     * close guessed across a gap is worse than no close at all.
+     */
+    pub candle_open_time: f64 = 0.0
+    pub candle_open_price: f64 = 0.0
+    pub has_candle: bool = false
+    pub previous_close: f64 = 0.0
+    pub has_previous_close: bool = false
+
     pub timeframe: i64 = 60
     pub time_offset: i64 = 7200
 end
@@ -207,6 +222,42 @@ func LearnOffset(s &: Session, broker_time: f64):
     end
 end
 
+/*
+ * Folds one tick into the candle the session is drawing.
+ *
+ * Called before the tick is stored, because the close of the candle that
+ * just ended is the price the session still holds: the last tick that
+ * landed inside it.
+ */
+func TrackCandle(s &: Session, tick_time: f64, price: f64, follows_gap: bool):
+    if s.timeframe <= 0: ret end
+    bucket := timex.CandleOpenTime(tick_time, s.timeframe)
+
+    if !s.has_candle:
+        s.candle_open_time = bucket
+        s.candle_open_price = price
+        s.has_candle = true
+        ret
+    end
+    if bucket <= s.candle_open_time: ret end
+
+    // A boundary went by. Only the one we watched end tells us its close.
+    s.has_previous_close = CloseIsKnown(s.candle_open_time, bucket, s.timeframe, s.has_price, follows_gap)
+    s.previous_close = s.price
+    s.candle_open_time = bucket
+    s.candle_open_price = price
+end
+
+// Candles are cut on the timeframe, so a session retuned to another one is
+// no longer drawing the candle it was.
+func ResetCandles(s &: Session):
+    s.has_candle = false
+    s.has_previous_close = false
+    s.candle_open_time = 0.0
+    s.candle_open_price = 0.0
+    s.previous_close = 0.0
+end
+
 func ApplyTick(s &: Session, symbol: str, tick_time: f64, price: f64, max_gap: i64):
     if s.symbol.len() > 0 && symbol != s.symbol: ret end
 
@@ -216,6 +267,8 @@ func ApplyTick(s &: Session, symbol: str, tick_time: f64, price: f64, max_gap: i
     if s.tick_follows_gap && s.last_tick_time > 0.0:
         Log("resuming after a " + str.FromInt(silence as i64) + "s gap in the price stream")
     end
+
+    TrackCandle(s, tick_time, price, s.tick_follows_gap)
 
     s.lost_data = false
     if s.has_price: s.prior_price = s.price end
@@ -524,6 +577,20 @@ func OpenSocket(s &: Session):
     end
 end
 
+/*
+ * Whether the candle that just ended really handed us its close.
+ *
+ * Only if we watched it end: one boundary at a time, on a stream that did
+ * not drop. A jump clean over a candle leaves the close of the one before
+ * last in hand, which is not the close anybody asked about, and a resumed
+ * stream never saw the ticks that ended it.
+ */
+pub func CloseIsKnown(previous_open_time: f64, new_open_time: f64, timeframe: i64, has_price: bool, follows_gap: bool): bool:
+    if !has_price || follows_gap: ret false end
+    if timeframe <= 0: ret false end
+    ret new_open_time == previous_open_time + (timeframe as f64)
+end
+
 pub func SetVerbose(enabled: bool):
     _verbose = enabled
 end
@@ -577,6 +644,7 @@ pub func Acquire(mode: str, symbol: str, timeframe: i64): int:
         s.idle_since = 0.0
         if timeframe > 0 && timeframe != s.timeframe:
             s.timeframe = timeframe
+            ResetCandles(s)
             _sessions.set(existing, s)
             if s.ready: SendSubscribe(s) end
         else:
@@ -628,6 +696,7 @@ pub func EnsureTimeframe(index: int, timeframe: i64):
     mut s := _sessions.get(index)
     if timeframe <= 0 || timeframe == s.timeframe: ret end
     s.timeframe = timeframe
+    ResetCandles(s)
     _sessions.set(index, s)
     if s.ready: SendSubscribe(s) end
 end

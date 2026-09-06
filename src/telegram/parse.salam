@@ -142,6 +142,52 @@ pub func Percent(raw: str): i64:
     ret (value + 0.5) as i64
 end
 
+// One of the three candle-gap states, however it was written.
+pub func GapWord(raw: str): str:
+    w := NormalizeWord(raw)
+    if w == "above" || w == "up" || w == "higher" || w == "greater" || w == "gt" || w == ">" ||
+        w == "بیشتر" || w == "بالاتر" || w == "بالا" || w == "صعودی": ret types.GAP_ABOVE end
+    if w == "below" || w == "down" || w == "lower" || w == "less" || w == "lt" || w == "<" ||
+        w == "کمتر" || w == "پایینتر" || w == "پایین" || w == "نزولی": ret types.GAP_BELOW end
+    if w == "equal" || w == "same" || w == "eq" || w == "=" || w == "==" ||
+        w == "برابر" || w == "مساوی" || w == "یکسان": ret types.GAP_EQUAL end
+    ret ""
+end
+
+/*
+ * A comma separated set of gap states, as `list`.
+ *
+ * Empty, "none" or "off" clears it, which is how a condition is taken back
+ * off an order. Returns false when a word is not one of the three.
+ */
+pub func GapList(raw: str, list &: str): bool:
+    list = ""
+    text := str.Trim(raw)
+    w := NormalizeWord(text)
+    if text.len() == 0 || w == "none" || w == "off" || w == "0" || w == "no" ||
+        w == "هیچ" || w == "خاموش" || w == "ندارد": ret true end
+
+    mut parts := text.split(",")
+    defer parts.free()
+    mut equal := false
+    mut above := false
+    mut below := false
+    mut i := 0
+    while i < parts.len():
+        piece := str.Trim(parts.get(i))
+        if piece.len() > 0:
+            relation := GapWord(piece)
+            if relation.len() == 0: ret false end
+            if relation == types.GAP_ABOVE: above = true end
+            if relation == types.GAP_EQUAL: equal = true end
+            if relation == types.GAP_BELOW: below = true end
+        end
+        i = i + 1
+    end
+    list = types.GapListMake(equal, above, below)
+    ret true
+end
+
 pub func OnOff(raw: str): str:
     w := NormalizeWord(raw)
     if w == "on" || w == "true" || w == "1" || w == "yes" || w == "روشن" || w == "بله": ret "on" end
@@ -232,6 +278,21 @@ pub func ParseOrder(args: str, spec &: types.OrderSpec): str:
             percent := Percent(value)
             if percent < 0: ret "حداقل نرخ پرداخت نامعتبر (عددی بین ۰ تا ۱۰۰): " + value end
             spec.min_payout = percent
+
+        else key == "tail" || key == "candletail" || key == "lastsec":
+            seconds := timex.ParseDuration(value)
+            if seconds == timex.INVALID || seconds < 0: ret "ثانیه‌های پایانی کندل نامعتبر: " + value end
+            spec.block_last_seconds = seconds
+
+        else key == "gapconfirm" || key == "gapok" || key == "gapyes":
+            mut list := ""
+            if !GapList(value, list): ret "شرط تایید گپ کندلی نامعتبر (بیشتر/برابر/کمتر): " + value end
+            spec.gap_confirm = list
+
+        else key == "gapcancel" || key == "gapno" || key == "gapx":
+            mut list := ""
+            if !GapList(value, list): ret "شرط کنسل گپ کندلی نامعتبر (بیشتر/برابر/کمتر): " + value end
+            spec.gap_cancel = list
 
         else key == "acc" || key == "account":
             account := AccountMode(value)

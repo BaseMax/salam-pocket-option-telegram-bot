@@ -164,18 +164,94 @@ func PayoutDetail(min_payout: i64, payout: i64, has_payout: bool): str:
         str.FromInt(min_payout) + "٪ شما کمتر است."
 end
 
-func Place(o: types.Order, entry_time: f64):
-    // The payout the broker quotes now, not the one it quoted when the order
-    // was written: it moves all day, so the floor is only worth anything if
-    // it is read in the second the trade would be sent.
+func GapWord(relation: str): str:
+    if relation == types.GAP_ABOVE: ret "بیشتر" end
+    if relation == types.GAP_BELOW: ret "کمتر" end
+    ret "برابر"
+end
+
+func GapWords(list: str): str:
+    mut out := ""
+    if types.GapListHas(list, types.GAP_EQUAL): out = GapWord(types.GAP_EQUAL) end
+    if types.GapListHas(list, types.GAP_ABOVE):
+        if out.len() > 0: out = out + " یا " end
+        out = out + GapWord(types.GAP_ABOVE)
+    end
+    if types.GapListHas(list, types.GAP_BELOW):
+        if out.len() > 0: out = out + " یا " end
+        out = out + GapWord(types.GAP_BELOW)
+    end
+    ret out
+end
+
+// The gap this session is looking at, or false when it cannot say.
+func ReadGap(o: types.Order, s: broker.Session, entry_time: f64, relation &: str): bool:
+    relation = ""
+    if !s.has_candle || !s.has_previous_close: ret false end
+    // A session is shared by symbol, so another order may have retuned it,
+    // and a quiet market can leave it a candle behind. Either way the
+    // candle it holds is not the one being entered on.
+    if s.timeframe != o.timeframe_seconds: ret false end
+    if s.candle_open_time != timex.CandleOpenTime(entry_time, o.timeframe_seconds): ret false end
+    relation = GapRelation(s.candle_open_price, s.previous_close)
+    ret true
+end
+
+/*
+ * Every condition the order carries, read in the second the trade would be
+ * sent rather than when it was written, because every one of them moves.
+ *
+ * `note` is the line kept on the order, `detail` the sentence the owner
+ * reads. A condition that cannot be read at all counts as unmet: the point
+ * of asking for one is not to trade without it.
+ */
+func ConditionsMet(o: types.Order, s: broker.Session, entry_time: f64, note &: str, detail &: str): bool:
+    note = ""
+    detail = ""
+
     mut has_payout := false
     payout := Payout(o.account_mode, o.symbol, has_payout)
     if !PayoutAllows(o.min_payout, payout, has_payout):
-        Finish(o, types.ST_SKIPPED, PayoutNote(o.min_payout, payout, has_payout),
-            EV_SKIPPED, o.triggered_price, PayoutDetail(o.min_payout, payout, has_payout))
-        ret
+        note = PayoutNote(o.min_payout, payout, has_payout)
+        detail = PayoutDetail(o.min_payout, payout, has_payout)
+        ret false
     end
 
+    left := timex.CandleCloseTime(entry_time, o.timeframe_seconds) - entry_time
+    if !TailAllows(o.expiry_mode, o.block_last_seconds, left):
+        note = "only " + str.FromInt(left as i64) + "s of the candle were left, under the " +
+            str.FromInt(o.block_last_seconds) + "s this order keeps clear"
+        detail = "از کندل فقط " + str.FromInt(left as i64) + " ثانیه مانده بود و شما ورود در " +
+            str.FromInt(o.block_last_seconds) + " ثانیهٔ پایانی کندل را بسته‌اید."
+        ret false
+    end
+
+    if o.gap_confirm.len() == 0 && o.gap_cancel.len() == 0: ret true end
+
+    mut relation := ""
+    if !ReadGap(o, s, entry_time, relation):
+        note = "the candle gap could not be read at entry"
+        detail = "گپ کندلی در این لحظه خوانده نشد: هنوز یک کندل کامل دیده نشده یا جریان قیمت قطع بوده است. " +
+            "چون شرط گپ گذاشته بودید، معامله بدون بررسی آن ارسال نمی‌شود."
+        ret false
+    end
+    if !GapAllows(o.gap_confirm, o.gap_cancel, relation):
+        note = "candle gap was " + relation + ", refused by this order"
+        // Plain text on purpose: the bot escapes a detail before showing it.
+        detail = "اپن کندل فعلی " + timex.FormatPrice(s.candle_open_price) +
+            " نسبت به کلوز کندل قبلی " + timex.FormatPrice(s.previous_close) +
+            " «" + GapWord(relation) + "» بود.\n"
+        if types.GapListHas(o.gap_cancel, relation):
+            detail = detail + "این حالت را روی «کنسل» گذاشته‌اید (" + GapWords(o.gap_cancel) + ")."
+        else:
+            detail = detail + "شرط تایید شما فقط «" + GapWords(o.gap_confirm) + "» است."
+        end
+        ret false
+    end
+    ret true
+end
+
+func Place(o: types.Order, entry_time: f64):
     idx := FindAttachment(o.id)
     if idx < 0:
         Finish(o, types.ST_FAILED, "no live session for this order", EV_FAILED, 0.0, "no live session for this order")
@@ -183,6 +259,13 @@ func Place(o: types.Order, entry_time: f64):
     end
     a := _attachments.get(idx)
     session := broker.Get(a.session)
+
+    mut refusal := ""
+    mut refusal_detail := ""
+    if !ConditionsMet(o, session, entry_time, refusal, refusal_detail):
+        Finish(o, types.ST_SKIPPED, refusal, EV_SKIPPED, o.triggered_price, refusal_detail)
+        ret
+    end
 
     mut close_at := 0.0
     mut rolled := 0 as i64
@@ -370,6 +453,43 @@ pub func PayoutAllows(min_payout: i64, payout: i64, has_payout: bool): bool:
     if min_payout <= 0: ret true end
     if !has_payout: ret false end
     ret payout >= min_payout
+end
+
+/*
+ * Whether a floating trade may start this late in its candle.
+ *
+ * A floating trade closes on a candle boundary, so one that starts three
+ * seconds before it has three seconds to run - and if that is under the
+ * broker's minimum, ResolveExpiry rolls it a whole candle further out and
+ * the trade is nothing like the one that was asked for. Below the floor it
+ * is not sent at all. A fixed trade carries its own length and does not
+ * care where the candle happens to end.
+ */
+pub func TailAllows(expiry_mode: str, block_last_seconds: i64, seconds_left: f64): bool:
+    if block_last_seconds <= 0: ret true end
+    if expiry_mode != types.EXPIRY_FLOATING: ret true end
+    ret seconds_left >= (block_last_seconds as f64)
+end
+
+// Where this candle opened against the close of the one before it.
+pub func GapRelation(open_price: f64, previous_close: f64): str:
+    if open_price > previous_close: ret types.GAP_ABOVE end
+    if open_price < previous_close: ret types.GAP_BELOW end
+    ret types.GAP_EQUAL
+end
+
+/*
+ * Whether the gap lets the trade through.
+ *
+ * Two independent sets, because a trader wants to say both kinds of thing:
+ * `cancel` names the gaps that call the trade off, `confirm` names the only
+ * gaps it will go on. An empty set asks nothing. A gap named by both is
+ * cancelled: the refusal is the one that is certain.
+ */
+pub func GapAllows(confirm: str, cancel: str, relation: str): bool:
+    if types.GapListHas(cancel, relation): ret false end
+    if confirm.len() > 0 && !types.GapListHas(confirm, relation): ret false end
+    ret true
 end
 
 // Which way the price has to travel for this order to be a crossing rather

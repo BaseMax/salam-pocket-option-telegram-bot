@@ -160,6 +160,9 @@ func FreshDraft(): wizard.Draft:
     d.amount = settings.Amount()
     d.valid_for_seconds = 0 as i64
     d.min_payout = settings.MinPayout()
+    d.block_last_seconds = settings.BlockLast()
+    d.gap_confirm = settings.GapConfirm()
+    d.gap_cancel = settings.GapCancel()
     ret d
 end
 
@@ -174,6 +177,9 @@ func SpecDefaults(): types.OrderSpec:
     spec.candle_count = settings.Candles()
     spec.amount = settings.Amount()
     spec.min_payout = settings.MinPayout()
+    spec.block_last_seconds = settings.BlockLast()
+    spec.gap_confirm = settings.GapConfirm()
+    spec.gap_cancel = settings.GapCancel()
     ret spec
 end
 
@@ -288,6 +294,9 @@ func SubmitOrder(chat_id: i64, spec: types.OrderSpec):
     o.timeframe_seconds = spec.timeframe_seconds
     o.chart_type = spec.chart_type
     o.min_payout = spec.min_payout
+    o.block_last_seconds = spec.block_last_seconds
+    o.gap_confirm = spec.gap_confirm
+    o.gap_cancel = spec.gap_cancel
     if spec.valid_for_seconds > 0:
         o.valid_until = timex.NowSeconds() + (spec.valid_for_seconds as f64)
     end
@@ -530,6 +539,9 @@ func CmdSettings(chat_id: i64):
     text = text + "<code>entry</code> نحوهٔ ورود: " + texts.TriggerLabel(settings.Entry()) + "\n"
     text = text + "<code>expiry</code> نوع انقضا: " + texts.ExpiryLabel(settings.Expiry()) + "\n"
     text = text + "<code>payout</code> حداقل نرخ پرداخت: " + texts.PayoutLabel(settings.MinPayout()) + "\n"
+    text = text + "<code>tail</code> ورود ممنوع در پایان کندل: " + texts.TailLabel(settings.BlockLast()) + "\n"
+    text = text + "<code>gapconfirm</code> گپ کندلی، تایید: " + texts.GapListLabel(settings.GapConfirm()) + "\n"
+    text = text + "<code>gapcancel</code> گپ کندلی، کنسل: " + texts.GapListLabel(settings.GapCancel()) + "\n"
     mut notify := "خاموش"
     if settings.NotifyBalance(): notify = "روشن" end
     text = text + "<code>balance</code> نمایش موجودی در اعلان‌ها: " + notify + "\n\n"
@@ -539,7 +551,7 @@ func CmdSettings(chat_id: i64):
     mut real := "❌ ثبت نشده"
     if settings.HasCredentials(types.MODE_REAL): real = "✅ ثبت شده" end
     text = text + "نشست دمو: " + demo + "\nنشست ریل: " + real + "\n\n"
-    text = text + "تغییر: <code>/set amount 5</code> · <code>/set tf 1m</code> · <code>/set payout 90</code> · <code>/set balance off</code>"
+    text = text + "تغییر: <code>/set amount 5</code> · <code>/set tf 1m</code> · <code>/set payout 90</code> · <code>/set gapcancel کمتر</code> · <code>/set balance off</code>"
     _m := tgapi.Send(_bot, chat_id, text, "")
 end
 
@@ -604,6 +616,24 @@ func CmdSet(chat_id: i64, args: str):
         percent := parse.Percent(value)
         if percent < 0: problem = "حداقل نرخ پرداخت نامعتبر: عددی بین ۰ تا ۱۰۰ بدهید، ۰ یعنی بدون شرط."
         else: settings.SetMinPayout(percent)
+        end
+
+    else key == "tail" || key == "lastsec":
+        seconds := timex.ParseDuration(value)
+        if seconds == timex.INVALID || seconds < 0: problem = "عدد نامعتبر. تعداد ثانیه بدهید، ۰ یعنی خاموش."
+        else: settings.SetBlockLast(seconds)
+        end
+
+    else key == "gapconfirm" || key == "gapok":
+        mut list := ""
+        if !parse.GapList(value, list): problem = "حالت نامعتبر. از برابر / بیشتر / کمتر استفاده کنید، یا none برای برداشتن."
+        else: settings.SetGapConfirm(list)
+        end
+
+    else key == "gapcancel" || key == "gapno":
+        mut list := ""
+        if !parse.GapList(value, list): problem = "حالت نامعتبر. از برابر / بیشتر / کمتر استفاده کنید، یا none برای برداشتن."
+        else: settings.SetGapCancel(list)
         end
 
     else key == "balance":

@@ -30,6 +30,9 @@ pub struct Config:
     // The payout floor a new order starts with, in percent. 0 means orders
     // do not ask about the payout unless the user says so.
     pub default_min_payout: i64 = 0
+    // Seconds at the end of a candle in which a floating trade is refused.
+    // The default is on: entering here is the case it exists to stop.
+    pub default_block_last: i64 = 5
 
     pub min_amount: f64 = 1.0
     pub max_amount: f64 = 20000.0
@@ -81,6 +84,7 @@ pub func Load(): Config:
     c.default_timeframe = EnvInt("DEFAULT_TIMEFRAME_SECONDS", 60 as i64)
     c.default_duration = EnvInt("DEFAULT_DURATION_SECONDS", 60 as i64)
     c.default_min_payout = EnvInt("DEFAULT_MIN_PAYOUT_PERCENT", 0 as i64)
+    c.default_block_last = EnvInt("DEFAULT_BLOCK_LAST_SECONDS", 5 as i64)
 
     c.min_amount = EnvFloat("MIN_AMOUNT", 1.0)
     c.max_amount = EnvFloat("MAX_AMOUNT", 20000.0)

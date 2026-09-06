@@ -46,10 +46,13 @@ pub struct Draft:
     pub amount: f64 = 1.0
     pub valid_for_seconds: i64 = 0
     pub min_payout: i64 = 0
+    pub block_last_seconds: i64 = 0
+    pub gap_confirm: str = ""
+    pub gap_cancel: str = ""
 
-    // "" or one of symbol|price|amount|duration|candles|valid|payout
+    // "" or one of symbol|price|amount|duration|candles|valid|payout|tail
     pub awaiting: str = ""
-    // "" or chart|tf
+    // "" or chart|tf|gap
     pub menu: str = ""
     pub info: bool = false
     pub rendered: str = ""
@@ -71,6 +74,7 @@ func PromptTitle(field: str): str:
     if field == "duration": ret "مدت ماندن در معامله را تایپ کنید و بفرستید." end
     if field == "candles": ret "تعداد کندل را تایپ کنید و بفرستید." end
     if field == "payout": ret "حداقل نرخ پرداخت را به درصد تایپ کنید و بفرستید." end
+    if field == "tail": ret "ثانیه‌های پایانی کندل را تایپ کنید و بفرستید." end
     ret "مدت اعتبار سفارش را تایپ کنید و بفرستید."
 end
 
@@ -102,6 +106,11 @@ func PromptMessage(field: str): str:
             "نمونه: <code>90</code> · <code>۸۵</code> · <code>92%</code>\n" +
             "برای برداشتن این شرط، بفرستید <code>0</code>."
     end
+    if field == "tail":
+        ret "⌨️ <b>ثانیه‌های پایانی کندل را تایپ کنید</b>\n\nدر انقضای شناور، معامله تا پایان کندل باز می‌ماند؛ پس اگر قیمت مثلاً ۳ ثانیه به پایان کندل به هدف برسد، معاملهٔ شما عملاً ۳ ثانیه‌ای است.\n" +
+            "با این عدد، آن چند ثانیهٔ پایانی بسته می‌شود: اگر برخورد در آن بازه رخ دهد معامله زده نمی‌شود و فقط خبرش را می‌دهیم.\n" +
+            "نمونه: <code>5</code> · <code>۱۰</code> · <code>0</code> یعنی خاموش."
+    end
     ret "⌨️ <b>مدت اعتبار سفارش را تایپ کنید</b>\n\nتا چه مدت منتظر رسیدن قیمت به هدف بمانیم؟ بعد از آن سفارش منقضی می‌شود.\n" +
         "نمونه: <code>30m</code> · <code>۳۰ دقیقه</code> · <code>2h</code> · <code>1 روز</code>\n" +
         "برای اینکه هیچ‌وقت منقضی نشود، بفرستید <code>0</code>.\n\n" + texts.TimeFormatHint()
@@ -114,6 +123,7 @@ func PromptPlaceholder(field: str): str:
     if field == "duration": ret "مثلاً 1m یا 90 یا 2 دقیقه" end
     if field == "candles": ret "مثلاً 1" end
     if field == "payout": ret "درصد، مثلاً 90 · 0 یعنی بدون شرط" end
+    if field == "tail": ret "ثانیه، مثلاً 5 · 0 یعنی خاموش" end
     ret "مثلاً 30m یا 2 ساعت · 0 یعنی بی‌نهایت"
 end
 
@@ -124,12 +134,13 @@ func PromptToast(field: str): str:
     if field == "duration": ret "⌨️ مدت معامله را همین‌جا تایپ کنید. مثلاً 1m یا 90 یا 2 دقیقه" end
     if field == "candles": ret "⌨️ تعداد کندل را همین‌جا تایپ کنید. مثلاً 1" end
     if field == "payout": ret "⌨️ حداقل نرخ پرداخت را به درصد تایپ کنید. مثلاً 90 · 0 یعنی بدون شرط" end
+    if field == "tail": ret "⌨️ چند ثانیهٔ پایانی کندل بسته باشد؟ مثلاً 5 · 0 یعنی خاموش" end
     ret "⌨️ مدت اعتبار را همین‌جا تایپ کنید. مثلاً 30m · 0 یعنی بی‌نهایت"
 end
 
 func IsPromptField(action: str): bool:
     ret action == "symbol" || action == "price" || action == "amount" || action == "duration" ||
-        action == "candles" || action == "valid" || action == "payout"
+        action == "candles" || action == "valid" || action == "payout" || action == "tail"
 end
 
 func SymbolText(d: Draft): str:
@@ -162,7 +173,13 @@ func RenderPanel(d: Draft, final: bool): str:
     out = out + "مبلغ: <b>" + timex.FormatMoney(d.amount) + "</b>\n"
     out = out + "حساب: <b>" + texts.AccountLabel(d.account_mode) + "</b>\n"
     out = out + "اعتبار سفارش: <b>" + ValidText(d) + "</b>\n"
-    out = out + "حداقل نرخ پرداخت: <b>" + texts.PayoutLabel(d.min_payout) + "</b>"
+    out = out + "حداقل نرخ پرداخت: <b>" + texts.PayoutLabel(d.min_payout) + "</b>\n"
+    if d.expiry_mode == types.EXPIRY_FLOATING:
+        out = out + "ورود ممنوع در: <b>" + texts.TailLabel(d.block_last_seconds) + "</b>\n"
+    end
+    mut gap := texts.GapSummary(d.gap_confirm, d.gap_cancel)
+    if gap.len() == 0: gap = "بدون شرط" end
+    out = out + "گپ کندلی: <b>" + gap + "</b>"
     if final: ret out end
 
     if d.menu == "chart":
@@ -171,6 +188,16 @@ func RenderPanel(d: Draft, final: bool): str:
         out = out + "• <b>" + texts.ChartLabel(types.CHART_HEIKIN_ASHI) + "</b> — " + texts.ChartHelp(types.CHART_HEIKIN_ASHI) + "\n"
         out = out + "• <b>" + texts.ChartLabel(types.CHART_LINE) + "</b> — " + texts.ChartHelp(types.CHART_LINE) + "\n\n"
         out = out + "نوع چارت فقط شکل کندل‌ها را عوض می‌کند؛ قیمت ورود و بسته شدن همیشه قیمت واقعی بازار است."
+        ret out
+    end
+
+    if d.menu == "gap":
+        out = out + "\n\n🕯 <b>گپ کندلی</b>\n\n"
+        out = out + "عدد <b>اپن کندل فعلی</b> با <b>کلوز کندل قبلی</b> مقایسه می‌شود و سه حالت دارد: برابر، بیشتر، کمتر.\n\n"
+        out = out + "۱) <b>تایید</b> (ردیف اول، نشانهٔ ✅) — معامله فقط وقتی زده شود که گپ یکی از این حالت‌ها باشد.\n"
+        out = out + "۲) <b>کنسل</b> (ردیف دوم، نشانهٔ 🚫) — اگر گپ یکی از این حالت‌ها بود، معامله زده نشود.\n\n"
+        out = out + "هر حالتی را می‌خواهید بزنید تا انتخاب شود؛ دوباره بزنید تا برداشته شود. هیچ‌کدام یعنی آن شرط را نمی‌خواهید.\n"
+        out = out + "اگر حالتی هم در تایید و هم در کنسل باشد، کنسل مقدم است."
         ret out
     end
 
@@ -218,6 +245,30 @@ func TimeframeKeyboard(): str:
     tgapi.Button(k, "1h", "w:tf:3600")
     tgapi.Row(k)
     tgapi.Button(k, "4h", "w:tf:14400")
+    tgapi.Button(k, "« بازگشت", "w:refresh")
+    ret tgapi.KeyboardJson(k)
+end
+
+// One state of one condition. The tick and the cross say which row this is,
+// so the two rows cannot be read as one list of six.
+func GapButton(k &: tgapi.Keyboard, list: str, relation: str, prefix: str, on_mark: str):
+    mut mark := "▫️ "
+    if types.GapListHas(list, relation): mark = on_mark end
+    tgapi.Button(k, mark + texts.GapWord(relation), prefix + ":" + relation)
+end
+
+func GapKeyboard(d: Draft): str:
+    mut k := tgapi.NewKeyboard()
+    GapButton(k, d.gap_confirm, types.GAP_EQUAL, "w:gapc", "✅ ")
+    GapButton(k, d.gap_confirm, types.GAP_ABOVE, "w:gapc", "✅ ")
+    GapButton(k, d.gap_confirm, types.GAP_BELOW, "w:gapc", "✅ ")
+    tgapi.Row(k)
+    GapButton(k, d.gap_cancel, types.GAP_EQUAL, "w:gapx", "🚫 ")
+    GapButton(k, d.gap_cancel, types.GAP_ABOVE, "w:gapx", "🚫 ")
+    GapButton(k, d.gap_cancel, types.GAP_BELOW, "w:gapx", "🚫 ")
+    tgapi.Row(k)
+    tgapi.Button(k, "🧹 پاک کردن هر دو شرط", "w:gapclear")
+    tgapi.Row(k)
     tgapi.Button(k, "« بازگشت", "w:refresh")
     ret tgapi.KeyboardJson(k)
 end
@@ -287,6 +338,16 @@ func MainKeyboard(d: Draft): str:
     tgapi.Button(k, "✍️ حداقل پرداخت: " + payout, "w:payout")
     tgapi.Row(k)
 
+    mut gap := "—"
+    if d.gap_confirm.len() > 0 || d.gap_cancel.len() > 0: gap = "✅" end
+    tgapi.Button(k, "🕯 گپ کندلی: " + gap, "w:gap")
+    if d.expiry_mode == types.EXPIRY_FLOATING:
+        mut tail := "خاموش"
+        if d.block_last_seconds > 0: tail = str.FromInt(d.block_last_seconds) + "s" end
+        tgapi.Button(k, "✍️ پایان کندل: " + tail, "w:tail")
+    end
+    tgapi.Row(k)
+
     mut info := "❓ راهنما"
     if d.info: info = "✖️ بستن راهنما" end
     tgapi.Button(k, info, "w:info")
@@ -300,6 +361,7 @@ end
 func Markup(d: Draft): str:
     if d.menu == "tf": ret TimeframeKeyboard() end
     if d.menu == "chart": ret ChartKeyboard(d) end
+    if d.menu == "gap": ret GapKeyboard(d) end
     ret MainKeyboard(d)
 end
 
@@ -396,6 +458,20 @@ func ApplyInput(d &: Draft, field: str, raw: str): str:
         percent := parse.Percent(raw)
         if percent < 0: ret "حداقل نرخ پرداخت نامعتبر است. عددی بین ۰ تا ۱۰۰ بفرستید، مثلاً <code>90</code>؛ برای برداشتن شرط <code>0</code>." end
         d.min_payout = percent
+        ret ""
+    end
+
+    if field == "tail":
+        trimmed_tail := str.ToEnglishDigits(str.Trim(raw))
+        if trimmed_tail == "0":
+            d.block_last_seconds = 0 as i64
+            ret ""
+        end
+        seconds := timex.ParseDuration(trimmed_tail)
+        if seconds == timex.INVALID || seconds < 0:
+            ret "عدد نامعتبر است. تعداد ثانیه را بفرستید، مثلاً <code>5</code>؛ برای خاموش کردن <code>0</code>."
+        end
+        d.block_last_seconds = seconds
         ret ""
     end
 
@@ -563,6 +639,19 @@ pub func HandleTap(b: bot.Bot, chat_id: i64, payload: str, message_id: i64, quer
         d.info = !d.info
     else action == "refresh":
         d.menu = ""
+    else action == "gap":
+        d.menu = "gap"
+        toast = "حالت‌های تایید (ردیف اول) و کنسل (ردیف دوم) را انتخاب کنید."
+    else action == "gapc":
+        d.gap_confirm = types.GapListToggle(d.gap_confirm, argument)
+        toast = "شرط تایید: " + texts.GapListLabel(d.gap_confirm)
+    else action == "gapx":
+        d.gap_cancel = types.GapListToggle(d.gap_cancel, argument)
+        toast = "شرط کنسل: " + texts.GapListLabel(d.gap_cancel)
+    else action == "gapclear":
+        d.gap_confirm = ""
+        d.gap_cancel = ""
+        toast = "هر دو شرط گپ کندلی برداشته شد."
     else action == "chart":
         if argument.len() == 0:
             d.menu = "chart"
@@ -645,5 +734,8 @@ pub func Spec(chat_id: i64): types.OrderSpec:
     spec.account_mode = d.account_mode
     spec.valid_for_seconds = d.valid_for_seconds
     spec.min_payout = d.min_payout
+    spec.block_last_seconds = d.block_last_seconds
+    spec.gap_confirm = d.gap_confirm
+    spec.gap_cancel = d.gap_cancel
     ret spec
 end

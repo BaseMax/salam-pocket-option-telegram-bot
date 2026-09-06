@@ -41,7 +41,10 @@ CREATE TABLE IF NOT EXISTS orders (
   note              TEXT,
   created_at        REAL    NOT NULL,
   updated_at        REAL    NOT NULL,
-  min_payout        INTEGER NOT NULL DEFAULT 0
+  min_payout        INTEGER NOT NULL DEFAULT 0,
+  block_last_seconds INTEGER NOT NULL DEFAULT 0,
+  gap_confirm       TEXT    NOT NULL DEFAULT '',
+  gap_cancel        TEXT    NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
 CREATE INDEX IF NOT EXISTS idx_orders_chat   ON orders(chat_id);
@@ -52,7 +55,7 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 `
 
-const COLUMNS := "id, chat_id, account_mode, symbol, direction, trigger_price, trigger_mode, approach_side, amount, expiry_mode, duration_seconds, candle_count, timeframe_seconds, chart_type, status, reference_price, valid_until, triggered_price, triggered_at, deal_id, open_price, opened_at, closes_at, close_price, closed_at, profit, note, created_at, updated_at, min_payout"
+const COLUMNS := "id, chat_id, account_mode, symbol, direction, trigger_price, trigger_mode, approach_side, amount, expiry_mode, duration_seconds, candle_count, timeframe_seconds, chart_type, status, reference_price, valid_until, triggered_price, triggered_at, deal_id, open_price, opened_at, closes_at, close_price, closed_at, profit, note, created_at, updated_at, min_payout, block_last_seconds, gap_confirm, gap_cancel"
 
 const ID_ALPHABET := "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
@@ -118,6 +121,9 @@ func ReadOrder(rows: sqlite.Rows): types.Order:
     o.created_at = sqlite.Float(rows, 27)
     o.updated_at = sqlite.Float(rows, 28)
     o.min_payout = sqlite.Int64(rows, 29)
+    o.block_last_seconds = sqlite.Int64(rows, 30)
+    o.gap_confirm = sqlite.Text(rows, 31)
+    o.gap_cancel = sqlite.Text(rows, 32)
     ret o
 end
 
@@ -160,6 +166,9 @@ pub func Open(path: str): bool:
     // it. SQLite refuses to add a column twice, and that refusal is the
     // answer we wanted, so the error is not one.
     _e4 := sqlite.Exec(Db(), "ALTER TABLE orders ADD COLUMN min_payout INTEGER NOT NULL DEFAULT 0")
+    _e5 := sqlite.Exec(Db(), "ALTER TABLE orders ADD COLUMN block_last_seconds INTEGER NOT NULL DEFAULT 0")
+    _e6 := sqlite.Exec(Db(), "ALTER TABLE orders ADD COLUMN gap_confirm TEXT NOT NULL DEFAULT ''")
+    _e7 := sqlite.Exec(Db(), "ALTER TABLE orders ADD COLUMN gap_cancel TEXT NOT NULL DEFAULT ''")
     rand.SeedAuto()
     ret true
 end
@@ -188,6 +197,9 @@ pub func Save(o: types.Order):
         ", timeframe_seconds = " + str.FromInt(o.timeframe_seconds) +
         ", chart_type = " + Quote(o.chart_type) +
         ", min_payout = " + str.FromInt(o.min_payout) +
+        ", block_last_seconds = " + str.FromInt(o.block_last_seconds) +
+        ", gap_confirm = " + Quote(o.gap_confirm) +
+        ", gap_cancel = " + Quote(o.gap_cancel) +
         ", status = " + Quote(o.status) +
         ", reference_price = " + NumOrNull(o.reference_price, o.has_reference) +
         ", valid_until = " + Num(o.valid_until) +
@@ -243,7 +255,10 @@ pub func Create(o: types.Order): types.Order:
         TextOrNull(row.note) + ", " +
         Num(row.created_at) + ", " +
         Num(row.updated_at) + ", " +
-        str.FromInt(row.min_payout) + ")"
+        str.FromInt(row.min_payout) + ", " +
+        str.FromInt(row.block_last_seconds) + ", " +
+        Quote(row.gap_confirm) + ", " +
+        Quote(row.gap_cancel) + ")"
     _e := sqlite.Exec(Db(), sql)
     ret row
 end

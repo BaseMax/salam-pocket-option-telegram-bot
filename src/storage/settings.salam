@@ -62,6 +62,33 @@ pub func SetMinPayout(percent: i64):
     store.PutSetting("min_payout", str.FromInt(percent))
 end
 
+// Seconds at the end of a candle where a floating trade is refused.
+pub func BlockLast(): i64:
+    ret store.GetSettingInt("block_last", _config.default_block_last)
+end
+
+pub func SetBlockLast(seconds: i64):
+    store.PutSetting("block_last", str.FromInt(seconds))
+end
+
+// The two candle-gap sets new orders start with, each a subset of
+// above/equal/below.
+pub func GapConfirm(): str:
+    ret store.GetSetting("gap_confirm", "")
+end
+
+pub func SetGapConfirm(list: str):
+    store.PutSetting("gap_confirm", list)
+end
+
+pub func GapCancel(): str:
+    ret store.GetSetting("gap_cancel", "")
+end
+
+pub func SetGapCancel(list: str):
+    store.PutSetting("gap_cancel", list)
+end
+
 pub func Chart(): str:
     ret store.GetSetting("chart", types.CHART_CANDLE)
 end

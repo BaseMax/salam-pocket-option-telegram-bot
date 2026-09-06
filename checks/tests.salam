@@ -13,6 +13,7 @@ import engine "../src/engine/engine.salam"
 import store "../src/storage/store.salam"
 import jsonx "../src/util/jsonx.salam"
 import ssid "../src/pocket/ssid.salam"
+import broker "../src/pocket/broker.salam"
 import texts "../src/telegram/texts.salam"
 import config "../src/config.salam"
 import settings "../src/storage/settings.salam"
@@ -199,6 +200,13 @@ func TestOrderCommand():
     EqInt(persian.duration_seconds, 120, "Persian duration")
     EqStr(persian.expiry_mode, types.EXPIRY_FLOATING, "Persian expiry")
 
+    mut conditions := types.OrderSpec {}
+    p5 := parse.ParseOrder("EURUSD buy 1.0854 tail=5 gapcancel=کمتر,برابر gapconfirm=بیشتر", conditions)
+    EqStr(p5, "", "the candle conditions parse")
+    EqInt(conditions.block_last_seconds, 5, "the tail in seconds")
+    EqStr(conditions.gap_cancel, "equal,below", "the cancel set")
+    EqStr(conditions.gap_confirm, "above", "and the confirm set")
+
     mut floor := types.OrderSpec {}
     p4 := parse.ParseOrder("EURUSD buy 1.0854 payout=90", floor)
     EqStr(p4, "", "a payout floor parses")
@@ -206,6 +214,7 @@ func TestOrderCommand():
 
     mut bad := types.OrderSpec {}
     Truthy(parse.ParseOrder("EURUSD buy 1.08 payout=140", bad).len() > 0, "a payout over 100 is refused")
+    Truthy(parse.ParseOrder("EURUSD buy 1.08 gapcancel=sideways", bad).len() > 0, "a gap state that is not one is refused")
     Truthy(parse.ParseOrder("EURUSD sideways 1.08", bad).len() > 0, "a bad direction is refused")
     Truthy(parse.ParseOrder("EURUSD buy 1.08 nope=1", bad).len() > 0, "an unknown key is refused")
     Truthy(parse.ParseOrder("EURUSD buy zero", bad).len() > 0, "a bad price is refused")
@@ -229,6 +238,91 @@ func TestTrigger():
     Truthy(engine.IsTouched(any, 1.04, true, 1.06), "crossed from below")
     Truthy(engine.IsTouched(any, 1.06, true, 1.04), "crossed from above")
     Falsy(engine.IsTouched(any, 1.06, true, 1.07), "never crossed")
+end
+
+/*
+ * The candle tail (item 3): a floating trade that starts in the last
+ * seconds of its candle has no candle left to run in.
+ */
+func TestCandleTail():
+    Truthy(engine.TailAllows(types.EXPIRY_FLOATING, 5 as i64, 30.0), "half a candle to go is fine")
+    Truthy(engine.TailAllows(types.EXPIRY_FLOATING, 5 as i64, 5.0), "exactly the floor is still allowed")
+    Falsy(engine.TailAllows(types.EXPIRY_FLOATING, 5 as i64, 4.9), "inside the last five seconds is not")
+    Falsy(engine.TailAllows(types.EXPIRY_FLOATING, 5 as i64, 0.2), "and neither is the last breath of it")
+    Truthy(engine.TailAllows(types.EXPIRY_FLOATING, 0 as i64, 0.2), "an order that did not ask is never refused")
+    Truthy(engine.TailAllows(types.EXPIRY_FIXED, 5 as i64, 0.2),
+        "a fixed trade carries its own length, so the candle boundary is not its business")
+end
+
+/*
+ * The candle gap (item 4): where this candle opened against the close of
+ * the one before it, as two independent conditions over the same three
+ * states - one that has to hold, one that calls the trade off.
+ */
+func TestCandleGap():
+    EqStr(engine.GapRelation(1.0855, 1.0850), types.GAP_ABOVE, "opened above the last close")
+    EqStr(engine.GapRelation(1.0845, 1.0850), types.GAP_BELOW, "opened below it")
+    EqStr(engine.GapRelation(1.0850, 1.0850), types.GAP_EQUAL, "opened on it")
+
+    // Nothing asked, nothing refused.
+    Truthy(engine.GapAllows("", "", types.GAP_ABOVE), "an order with no gap condition trades")
+
+    // The cancel condition.
+    Falsy(engine.GapAllows("", types.GAP_ABOVE, types.GAP_ABOVE), "a cancelled state stops the trade")
+    Truthy(engine.GapAllows("", types.GAP_ABOVE, types.GAP_BELOW), "another state goes through")
+    cancel_two := types.GapListMake(true, true, false)
+    EqStr(cancel_two, "equal,above", "two states, in the order they are read")
+    Falsy(engine.GapAllows("", cancel_two, types.GAP_EQUAL), "either of the two cancels")
+    Falsy(engine.GapAllows("", cancel_two, types.GAP_ABOVE), "and so does the other")
+    Truthy(engine.GapAllows("", cancel_two, types.GAP_BELOW), "the third still trades")
+
+    // The confirm condition.
+    Truthy(engine.GapAllows(types.GAP_ABOVE, "", types.GAP_ABOVE), "the confirmed state trades")
+    Falsy(engine.GapAllows(types.GAP_ABOVE, "", types.GAP_EQUAL), "an unconfirmed one does not")
+    Falsy(engine.GapAllows(types.GAP_ABOVE, "", types.GAP_BELOW), "nor the last one")
+
+    // Both at once, and the tie.
+    Truthy(engine.GapAllows(types.GapListMake(true, true, false), types.GAP_ABOVE, types.GAP_EQUAL),
+        "confirmed and not cancelled trades")
+    Falsy(engine.GapAllows(types.GapListMake(true, true, false), types.GAP_ABOVE, types.GAP_ABOVE),
+        "a state in both lists is cancelled: the refusal is the certain one")
+
+    // The set, as the panel toggles it.
+    mut set := types.GapListToggle("", types.GAP_BELOW)
+    EqStr(set, "below", "one tap selects a state")
+    set = types.GapListToggle(set, types.GAP_EQUAL)
+    EqStr(set, "equal,below", "a second joins it")
+    set = types.GapListToggle(set, types.GAP_BELOW)
+    EqStr(set, "equal", "and tapping again takes it back off")
+    Truthy(types.GapListHas("equal,below", types.GAP_BELOW), "membership reads the whole list")
+    Falsy(types.GapListHas("equal,below", types.GAP_ABOVE), "and does not invent it")
+    Falsy(types.GapListHas("", types.GAP_EQUAL), "an empty set holds nothing")
+
+    // What the user may type.
+    mut list := ""
+    Truthy(parse.GapList("بیشتر,برابر", list), "Persian words parse")
+    EqStr(list, "equal,above", "into the one spelling")
+    Truthy(parse.GapList("above", list), "and so does English")
+    EqStr(list, "above", "on its own")
+    Truthy(parse.GapList(">,<", list), "signs work too")
+    EqStr(list, "above,below", "both of them")
+    Truthy(parse.GapList("none", list), "none is a real answer")
+    EqStr(list, "", "and clears the condition")
+    Falsy(parse.GapList("sideways", list), "a word that is not one of the three is refused")
+end
+
+/*
+ * The close of a candle is only known when we watched that candle end.
+ * This is what stands between a gap condition and a number invented from a
+ * stream that was down.
+ */
+func TestCandleTracking():
+    Truthy(broker.CloseIsKnown(1000.0, 1060.0, 60 as i64, true, false), "one boundary, on a live stream")
+    Falsy(broker.CloseIsKnown(1000.0, 1120.0, 60 as i64, true, false), "a jump over a whole candle knows nothing")
+    Falsy(broker.CloseIsKnown(1000.0, 1060.0, 60 as i64, true, true), "nor does a stream that just came back")
+    Falsy(broker.CloseIsKnown(1000.0, 1060.0, 60 as i64, false, false), "nor one that never had a price")
+    Truthy(broker.CloseIsKnown(900.0, 1200.0, 300 as i64, true, false), "a five minute candle counts its own boundary")
+    Falsy(broker.CloseIsKnown(900.0, 1200.0, 60 as i64, true, false), "the timeframe has to be the one being drawn")
 end
 
 func TestExpiry():
@@ -316,6 +410,9 @@ func TestStore():
     o.has_reference = true
     o.approach_side = types.SIDE_BELOW
     o.min_payout = 88 as i64
+    o.block_last_seconds = 5 as i64
+    o.gap_confirm = "above"
+    o.gap_cancel = "equal,below"
 
     saved := store.Create(o)
     EqInt(saved.id.len(), 4, "the id is four characters")
@@ -326,6 +423,9 @@ func TestStore():
     EqFloat(back.trigger_price, 1.9532, "and so does the price")
     Truthy(back.has_reference, "a reference price that was set reads as set")
     EqInt(back.min_payout, 88, "and so does the payout floor")
+    EqInt(back.block_last_seconds, 5, "and the candle tail")
+    EqStr(back.gap_confirm, "above", "and the confirm set")
+    EqStr(back.gap_cancel, "equal,below", "and the cancel set")
 
     mut active := store.ListActive()
     EqInt(active.len(), 1, "it is active")
@@ -401,6 +501,15 @@ func TestSettings():
     EqStr(settings.Mode(), types.MODE_DEMO, "demo unless told otherwise")
     settings.SetMode(types.MODE_REAL)
     EqStr(settings.Mode(), types.MODE_REAL, "the account switch persists")
+
+    EqInt(settings.BlockLast(), 5, "the tail guard is on by default, at five seconds")
+    settings.SetBlockLast(10 as i64)
+    EqInt(settings.BlockLast(), 10, "and a stored one wins")
+    settings.SetBlockLast(0 as i64)
+    EqInt(settings.BlockLast(), 0, "zero turns it off and stays off")
+    EqStr(settings.GapCancel(), "", "no gap condition unless one is asked for")
+    settings.SetGapCancel("equal,below")
+    EqStr(settings.GapCancel(), "equal,below", "and a stored one is remembered")
 
     EqInt(settings.MinPayout(), 0, "no payout floor unless one is asked for")
     settings.SetMinPayout(90 as i64)
@@ -617,6 +726,9 @@ func main:
     TestOrderCommand()
     TestTrigger()
     TestPayoutFloor()
+    TestCandleTail()
+    TestCandleGap()
+    TestCandleTracking()
     TestExpiry()
     TestJson()
     TestSsid()

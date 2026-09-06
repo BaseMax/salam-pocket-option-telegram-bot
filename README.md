@@ -148,7 +148,8 @@ Telegram take precedence and persist in the database.
 ```
 /order GBPAUD_otc buy 1.95320 tf=1m dur=60 amount=1 acc=demo
 /order EURUSD sell 1.08540 tf=1m exp=float candles=1 entry=next
-/order EURUSD_otc buy 1.08540 payout=90
+/order EURUSD_otc buy 1.08540 payout=90 tail=5
+/order EURUSD buy 1.08540 exp=float gapcancel=کمتر,برابر gapconfirm=بیشتر
 ```
 
 | Key | Values | Default |
@@ -163,6 +164,9 @@ Telegram take precedence and persist in the database.
 | `acc` | `demo`, `real` | `/mode` |
 | `valid` | `30m`, abandon if never triggered | none |
 | `payout` | `90`, minimum payout percent at the moment of the trade | `/set payout` |
+| `tail` | `5`, seconds at the end of a candle where a floating trade is refused | `/set tail` |
+| `gapconfirm` | `برابر`/`بیشتر`/`کمتر` (`equal`/`above`/`below`), comma separated; the gap must be one of them | `/set gapconfirm` |
+| `gapcancel` | the same three; a gap that is one of them calls the trade off | `/set gapcancel` |
 
 Every value is read leniently. Durations accept any unit spelling in either language and any
 case: `90`, `1m`, `1M`, `2 minutes`, `۳۰ دقیقه`, `1h 30m`, `2 ساعت و ۱۵ دقیقه`, `3 days`, `1 ماه`
@@ -244,12 +248,31 @@ pending ──price touches trigger──┬─ touch mode ───────
 `pending` also ends in `cancelled` (by you) or `expired` (validity elapsed); any step can end in
 `failed` if the broker refuses the trade.
 
-An order carrying a payout floor (`payout=90`, or `/set payout 90`) has one more way out. The
-percentage the broker prints beside a symbol moves all day, so it is read in the second the trade
-would be sent, not when the order was written: at or above the floor the trade goes, and below it
-nothing is sent and the order ends `skipped` with a message saying the price arrived but the
-condition did not hold. A floor the broker quotes no payout against counts as not met — an
-unverifiable condition is not a satisfied one.
+### Conditions read at the trade, not at the order
+
+Three optional conditions end an order in `skipped` — the price arrived, the condition did not
+hold, nothing was sent, and the owner is told which one it was. All three are read in the second
+the trade would be sent rather than when the order was written, because all three move:
+
+- **Payout floor** (`payout=90`, `/set payout 90`). The percentage the broker prints beside a
+  symbol changes all day. At or above the floor the trade goes; below it, it does not.
+- **Candle tail** (`tail=5`, `/set tail 5`, default 5 seconds). A floating trade closes on a candle
+  boundary, so one that starts three seconds before it is a three second trade — and if that is
+  under the broker's minimum, the expiry rolls a whole candle further out and the trade is nothing
+  like the one that was asked for. Inside the last N seconds of the candle it is refused instead.
+  Fixed-duration trades carry their own length and are never affected.
+- **Candle gap** (`gapconfirm=`, `gapcancel=`). This candle's open against the previous candle's
+  close, which is one of three states: `equal`, `above`, `below`. Two independent sets over those
+  same three: `gapconfirm` names the only gaps the trade will go on, `gapcancel` names the gaps
+  that call it off. Either may be empty, hold one state, or hold several. A state named by both is
+  cancelled.
+
+A condition that cannot be read counts as unmet, and the trade is not sent: an unverifiable
+condition is not a satisfied one. For the payout that means the broker quoted none; for the gap it
+means no whole candle has been watched yet on that session, or the price stream dropped across the
+boundary, so the previous close is not something the bot is willing to invent. The broker publishes
+no OHLC series — the candle being drawn is aggregated from the tick stream — so a gap condition
+needs one candle boundary to pass after the session connects before it can be judged.
 
 ---
 
@@ -340,6 +363,7 @@ notable ones:
 | `PO_SERVER_TIME_OFFSET` | `7200` | Starting guess for the broker clock offset |
 | `MIN_DURATION_SECONDS` | `5` | Broker floor for a binary option |
 | `DEFAULT_MIN_PAYOUT_PERCENT` | `0` | Payout floor new orders start with; `0` means no condition |
+| `DEFAULT_BLOCK_LAST_SECONDS` | `5` | Seconds at the end of a candle where a floating trade is refused; `0` is off |
 | `SESSION_IDLE_TTL_SECONDS` | `60` | How long a session lingers after its last order settles |
 | `DISPLAY_TIMEZONE_OFFSET_MINUTES` | `210` | Minutes east of UTC for every timestamp shown |
 ## Development
@@ -356,7 +380,7 @@ services. All of them are demo-account only.
 
 | program | what it proves | touches |
 | --- | --- | --- |
-| `tests` | durations, symbols, the command parser, the trading rules, SQLite, settings, every notification, 64-bit ids, update polling | nothing |
+| `tests` | durations, symbols, the command parser, the trading rules, the entry conditions (payout, candle tail, candle gap), SQLite, settings, every notification, 64-bit ids, update polling | nothing |
 | `recovery` | what a restart does: mid-flight orders fail, live ones are re-attached, `/session` reloads credentials without losing them | nothing |
 | `sessions` | the session table hands out indices the engine keeps: closing one must not renumber another, and a balance is known from any socket of that account | broker (read only) |
 | `smoke` | connect, authenticate, asset list, balance, live ticks | broker (read only) |
@@ -405,7 +429,10 @@ history up to `ac9807e`. Where the two differ:
 - **No candle series.** The TypeScript version aggregated ticks into candles
   and could draw heikin-ashi. The chart type is still carried on every order
   and still explained in the guide, but nothing in the bot renders candles, so
-  the aggregation was left out rather than written and never called.
+  the aggregation was left out rather than written and never called. A session
+  does keep the one candle it is drawing — where it opened, and the close of
+  the candle before it — because the candle gap condition is a question about
+  exactly that boundary and the broker sends no OHLC to answer it with.
 - **Timezone as an offset.** `DISPLAY_TIMEZONE_OFFSET_MINUTES` (default 210,
   Tehran) replaces the IANA name. Iran does not observe daylight saving, so a
   fixed offset is exact; anywhere that does would need `calendar.LoadZone`.
