@@ -1,5 +1,3 @@
-// A live check against the demo account: connect, authenticate, and report
-// what the broker says. It never places an order.
 package main
 
 import os

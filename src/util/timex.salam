@@ -1,5 +1,3 @@
-// Time the way this bot talks about it: durations a human typed, and the
-// candle grid the broker settles on.
 package timex
 
 import str
@@ -13,15 +11,10 @@ const WEEK := 604800 as i64
 const MONTH := 2592000 as i64
 const YEAR := 31536000 as i64
 
-// ParseDuration answers this when the text is not a duration at all.
 pub const INVALID := 0 - 1 as i64
 
-// Zero-width non-joiner, which Persian keyboards sprinkle inside words.
 const ZWNJ := "‌"
 
-// The multiplier for one unit word, or 0 when the word is not a unit.
-// Every spelling the bot accepts lives here: English short, English long,
-// and Persian, in either digit set and either letter shape.
 func UnitSeconds(word: str): i64:
     if word == "s" || word == "sec" || word == "secs" || word == "second" || word == "seconds": ret 1 end
     if word == "ث" || word == "ثانیه" || word == "ثانیهها" || word == "ثانیهای": ret 1 end
@@ -47,8 +40,6 @@ func UnitSeconds(word: str): i64:
     ret 0
 end
 
-// Lower-cases, unifies digits and Persian letter shapes, and turns every
-// spelling of "and" into a space, so the scanner sees one flat form.
 func Normalize(raw: str): str:
     mut s := str.ToEnglishDigits(raw)
     s = str.Lower(s)
@@ -79,14 +70,6 @@ func Pad2(n: i64): str:
     ret str.FromInt(n)
 end
 
-/*
- * Reads a human duration and returns whole seconds, or INVALID.
- *
- * Accepts `90`, `1m`, `1M`, `30 دقیقه`, `1h 30m`, `2 ساعت و 15 دقیقه`,
- * `3 days`, `1 ماه`. A bare number counts as seconds. Anything that is not a
- * number followed by a known unit makes the whole text invalid, so a typo is
- * reported rather than silently read as part of it.
- */
 pub func ParseDuration(raw: str): i64:
     text := Normalize(raw)
     if text.len() == 0: ret INVALID end
@@ -141,7 +124,6 @@ pub func ParseDuration(raw: str): i64:
     ret seconds
 end
 
-// The compact form the buttons wear: 1h30m, 90s, 2d.
 pub func FormatDuration(seconds: i64): str:
     if seconds < MINUTE: ret str.FromInt(seconds) + "s" end
 
@@ -197,12 +179,10 @@ pub func TimeframeLabel(seconds: i64): str:
     ret FormatDuration(seconds)
 end
 
-// Epoch seconds, with the fractional part the tick stream works in.
 pub func NowSeconds(): f64:
     ret (time.NowMillis() as f64) / 1000.0
 end
 
-// The start of the candle a moment falls in, on the broker's clock.
 pub func CandleOpenTime(t: f64, timeframe_seconds: i64): f64:
     tf := timeframe_seconds as f64
     ret ((t / tf) as i64 as f64) * tf
@@ -212,16 +192,12 @@ pub func CandleCloseTime(t: f64, timeframe_seconds: i64): f64:
     ret CandleOpenTime(t, timeframe_seconds) + (timeframe_seconds as f64)
 end
 
-// The close of the count-th candle from here, counting the current one as
-// the first.
 pub func NthCandleCloseTime(t: f64, timeframe_seconds: i64, count: i64): f64:
     mut n := count
     if n < 1: n = 1 as i64 end
     ret CandleOpenTime(t, timeframe_seconds) + (timeframe_seconds as f64) * (n as f64)
 end
 
-// A wall clock the user recognises: YYYY-MM-DD HH:MM:SS at the configured
-// offset. Iran has no daylight saving, so a fixed offset is exact.
 pub func FormatTime(epoch: f64, offset_minutes: i64): str:
     total := (epoch as i64) + offset_minutes * MINUTE
     days := total / DAY
@@ -234,7 +210,6 @@ pub func FormatTime(epoch: f64, offset_minutes: i64): str:
     minute := (rem % HOUR) / MINUTE
     second := rem % MINUTE
 
-    // days since 1970-01-01 to a civil date (Howard Hinnant's algorithm)
     z := days + 719468 as i64
     era := z / 146097
     doe := z - era * 146097
@@ -253,8 +228,6 @@ pub func FormatTime(epoch: f64, offset_minutes: i64): str:
     ret str.FromInt(year) + "-" + Pad2(month) + "-" + Pad2(day) + " " + Pad2(hour) + ":" + Pad2(minute) + ":" + Pad2(second)
 end
 
-// A price as the broker quotes it: five decimals, or three for big numbers,
-// with the trailing zeros trimmed.
 pub func FormatPrice(price: f64): str:
     mut decimals := 5
     mut abs := price
@@ -271,7 +244,6 @@ pub func FormatPrice(price: f64): str:
     ret text
 end
 
-// Money, always with two decimals and a sign in front of the dollar.
 pub func FormatMoney(value: f64): str:
     mut abs := value
     mut sign := ""

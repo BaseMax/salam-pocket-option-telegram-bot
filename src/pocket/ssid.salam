@@ -1,8 +1,3 @@
-// Reading the auth frame a user copied out of their browser.
-//
-// Two dialects are in the wild and both are accepted: the current p.finance
-// one keyed by "sessionToken", and the older one keyed by "session". What
-// comes back is the exact JSON to emit as the socket's "auth" event.
 package ssid
 
 import parse "../telegram/parse.salam"
@@ -10,14 +5,10 @@ import str
 import encoding.json
 import types "../types.salam"
 
-@en "Auth"
-@fa "احراز هویت"
 pub struct Auth:
     pub ok: bool = false
     pub error: str = ""
-    // The JSON object emitted as the "auth" event.
     pub frame: str = ""
-    // Emitted as "user_init" first when the modern dialect needs it.
     pub init_frame: str = ""
     pub has_init: bool = false
     pub session: str = ""
@@ -30,8 +21,6 @@ func CabinetUrl(mode: str): str:
     ret "cabinet/quick-high-low"
 end
 
-// The object inside a pasted `42["auth",{…}]` frame, or the text itself when
-// it is already an object.
 func ExtractObject(raw: str): str:
     text := str.Trim(raw)
     open := str.IndexOf(text, "{")
@@ -77,13 +66,6 @@ func BuildModern(token: str, uid: i64, mode: str): Auth:
     ret a
 end
 
-/*
- * Reads whatever the user pasted.
- *
- * `uid_fallback` is used when the frame carries no uid of its own, which is
- * why PO_DEMO_UID / PO_REAL_UID exist: a bare session id cannot be used
- * without one.
- */
 pub func Parse(raw: str, mode: str, uid_fallback: i64): Auth:
     text := str.Trim(raw)
     if text.len() == 0:
@@ -92,7 +74,6 @@ pub func Parse(raw: str, mode: str, uid_fallback: i64): Auth:
 
     obj := ExtractObject(text)
     if obj.len() == 0:
-        // A bare session id, which only works if the uid is configured.
         if uid_fallback == 0:
             ret Auth { ok = false, error = "برای یک session خام، uid هم لازم است: PO_DEMO_UID یا PO_REAL_UID را تنظیم کنید." }
         end
@@ -116,7 +97,6 @@ pub func Parse(raw: str, mode: str, uid_fallback: i64): Auth:
     ret Auth { ok = false, error = "این فریم نه session دارد نه sessionToken." }
 end
 
-// The token, shortened, for a log line that must never carry the whole one.
 pub func Redact(a: Auth): str:
     if a.session.len() <= 8: ret "…" end
     ret a.session.substr(0, 4) + "…" + a.session.substr(a.session.len() - 4, 4)

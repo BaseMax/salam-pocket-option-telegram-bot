@@ -1,13 +1,3 @@
-/*
- * The order state machine.
- *
- * pending ─price touches trigger─┬─ touch ───────────────► placing ─► open ─► won/lost/draw
- *                                └─ next_candle ─► armed ─► (candle opens) ─► placing ─► …
- *
- * Nothing here talks to Telegram: what happens is pushed onto an event
- * queue that the bot layer drains, which keeps the trading rules readable
- * and lets both sides be tested on their own.
- */
 package engine
 
 import str
@@ -19,8 +9,6 @@ import timex "../util/timex.salam"
 import config "../config.salam"
 import symbols "../pocket/symbols.salam"
 
-// What the engine reports. The order travels with the event so the bot can
-// render it without going back to the database.
 pub const EV_ARMED := "armed"
 pub const EV_TRIGGERED := "triggered"
 pub const EV_OPENED := "opened"
@@ -43,8 +31,6 @@ struct Attachment:
     pub settlement_warned: bool = false
 end
 
-@en "Event"
-@fa "رویداد"
 pub struct Event:
     pub kind: str = ""
     pub order: types.Order = types.Order {}
@@ -87,9 +73,6 @@ func Attach(o: types.Order):
 
     session := broker.Acquire(o.account_mode, o.symbol, o.timeframe_seconds)
     if !broker.IsLive(session):
-        // No socket, so nothing will ever watch this price. Say so now rather
-        // than leaving the order pending against a connection that does not
-        // exist.
         Finish(o, types.ST_FAILED, "could not open a broker session for this order",
             EV_FAILED, 0.0, "اتصال به کارگزار برای این سفارش باز نشد.")
         ret
@@ -101,11 +84,6 @@ func Attach(o: types.Order):
     _attachments.push(a)
 end
 
-/*
- * One order's second: expire it if its validity ran out, enter it if the
- * candle it was waiting for has opened, or say that the broker is late with
- * a result.
- */
 func HousekeepOne(index: int, now: f64):
     a := _attachments.get(index)
     o := store.Get(a.order_id)
@@ -121,8 +99,6 @@ func HousekeepOne(index: int, now: f64):
 
     s := broker.Get(a.session)
     if o.status == types.ST_ARMED && s.has_price:
-        // A quiet market sends no ticks, so the candle that should have
-        // opened this order is noticed here rather than on a tick.
         MaybeEnterOnNewCandle(o, now + (s.time_offset as f64), s.price, s.time_offset, s.tick_follows_gap)
         ret
     end
@@ -138,7 +114,6 @@ func HousekeepOne(index: int, now: f64):
     end
 end
 
-// Ends an order's life: record the outcome, let the session go, say so.
 func Finish(o: types.Order, status: str, note: str, kind: str, price: f64, detail: str):
     mut done := o
     done.status = status
@@ -184,27 +159,15 @@ func GapWords(list: str): str:
     ret out
 end
 
-// The gap this session is looking at, or false when it cannot say.
 func ReadGap(o: types.Order, s: broker.Session, entry_time: f64, relation &: str): bool:
     relation = ""
     if !s.has_candle || !s.has_previous_close: ret false end
-    // A session is shared by symbol, so another order may have retuned it,
-    // and a quiet market can leave it a candle behind. Either way the
-    // candle it holds is not the one being entered on.
     if s.timeframe != o.timeframe_seconds: ret false end
     if s.candle_open_time != timex.CandleOpenTime(entry_time, o.timeframe_seconds): ret false end
     relation = GapRelation(s.candle_open_price, s.previous_close)
     ret true
 end
 
-/*
- * Every condition the order carries, read in the second the trade would be
- * sent rather than when it was written, because every one of them moves.
- *
- * `note` is the line kept on the order, `detail` the sentence the owner
- * reads. A condition that cannot be read at all counts as unmet: the point
- * of asking for one is not to trade without it.
- */
 func ConditionsMet(o: types.Order, s: broker.Session, entry_time: f64, note &: str, detail &: str): bool:
     note = ""
     detail = ""
@@ -237,7 +200,6 @@ func ConditionsMet(o: types.Order, s: broker.Session, entry_time: f64, note &: s
     end
     if !GapAllows(o.gap_confirm, o.gap_cancel, relation):
         note = "candle gap was " + relation + ", refused by this order"
-        // Plain text on purpose: the bot escapes a detail before showing it.
         detail = "اپن کندل فعلی " + timex.FormatPrice(s.candle_open_price) +
             " نسبت به کلوز کندل قبلی " + timex.FormatPrice(s.previous_close) +
             " «" + GapWord(relation) + "» بود.\n"
@@ -279,10 +241,6 @@ func Place(o: types.Order, entry_time: f64):
 
     mut retried := ack
     if !ack.ok && ack.refused && close_at > 0.0:
-        // Some servers refuse an absolute close, and the same trade sent as a
-        // duration goes through. Only a refusal is retried: an order that
-        // merely timed out may have been accepted, and sending it again would
-        // open a second trade.
         mut seconds := (broker_close - entry_time + 0.5) as i64
         if seconds < _config.min_duration: seconds = _config.min_duration end
         retried = broker.PlaceOrder(a.session, o.amount, o.direction, seconds, 0.0,
@@ -304,7 +262,6 @@ func Place(o: types.Order, entry_time: f64):
     Publish(EV_OPENED, open, retried.open_price, 0.0, "")
 end
 
-// The price arrived. Enter now, or arm the order for the next candle.
 func Triggered(o: types.Order, price: f64, tick_time: f64, offset: i64):
     if o.trigger_mode == types.TRIGGER_NEXT_CANDLE:
         mut armed := o
@@ -326,8 +283,6 @@ func Triggered(o: types.Order, price: f64, tick_time: f64, offset: i64):
     Place(placing, tick_time)
 end
 
-// An armed order enters at the top of the next candle - unless the stream
-// was down when that candle opened, or the candle has already gone by.
 func MaybeEnterOnNewCandle(o: types.Order, tick_time: f64, price: f64, offset: i64, follows_gap: bool):
     if o.triggered_at == 0.0: ret end
     armed_candle := timex.CandleOpenTime(o.triggered_at + (offset as f64), o.timeframe_seconds)
@@ -416,7 +371,6 @@ func ApplyDeal(d: broker.Deal):
     Publish(EV_SETTLED, done, 0.0, 0.0, "")
 end
 
-// Reports a session whose credentials the broker rejected, once.
 func CheckAuth():
     mut i := 0
     while i < _attachments.len():
@@ -434,7 +388,6 @@ func CheckAuth():
     end
 end
 
-// What the broker is paying for this symbol right now, if it has said.
 pub func Payout(mode: str, symbol: str, has_payout &: bool): i64:
     a := symbols.Find(broker.Assets(mode), symbol)
     has_payout = a.symbol.len() > 0 && a.has_payout
@@ -442,58 +395,30 @@ pub func Payout(mode: str, symbol: str, has_payout &: bool): i64:
     ret a.payout
 end
 
-/*
- * Whether a payout clears an order's floor.
- *
- * An order with no floor takes whatever the broker is paying. One with a
- * floor and no quote to check it against does not trade: an unverifiable
- * condition is a condition that was not met.
- */
 pub func PayoutAllows(min_payout: i64, payout: i64, has_payout: bool): bool:
     if min_payout <= 0: ret true end
     if !has_payout: ret false end
     ret payout >= min_payout
 end
 
-/*
- * Whether a floating trade may start this late in its candle.
- *
- * A floating trade closes on a candle boundary, so one that starts three
- * seconds before it has three seconds to run - and if that is under the
- * broker's minimum, ResolveExpiry rolls it a whole candle further out and
- * the trade is nothing like the one that was asked for. Below the floor it
- * is not sent at all. A fixed trade carries its own length and does not
- * care where the candle happens to end.
- */
 pub func TailAllows(expiry_mode: str, block_last_seconds: i64, seconds_left: f64): bool:
     if block_last_seconds <= 0: ret true end
     if expiry_mode != types.EXPIRY_FLOATING: ret true end
     ret seconds_left >= (block_last_seconds as f64)
 end
 
-// Where this candle opened against the close of the one before it.
 pub func GapRelation(open_price: f64, previous_close: f64): str:
     if open_price > previous_close: ret types.GAP_ABOVE end
     if open_price < previous_close: ret types.GAP_BELOW end
     ret types.GAP_EQUAL
 end
 
-/*
- * Whether the gap lets the trade through.
- *
- * Two independent sets, because a trader wants to say both kinds of thing:
- * `cancel` names the gaps that call the trade off, `confirm` names the only
- * gaps it will go on. An empty set asks nothing. A gap named by both is
- * cancelled: the refusal is the one that is certain.
- */
 pub func GapAllows(confirm: str, cancel: str, relation: str): bool:
     if types.GapListHas(cancel, relation): ret false end
     if confirm.len() > 0 && !types.GapListHas(confirm, relation): ret false end
     ret true
 end
 
-// Which way the price has to travel for this order to be a crossing rather
-// than a coincidence.
 pub func ResolveApproachSide(trigger_price: f64, reference_price: f64, has_reference: bool): str:
     if !has_reference: ret types.SIDE_ANY end
     if reference_price < trigger_price: ret types.SIDE_BELOW end
@@ -515,13 +440,6 @@ pub func IsTouched(o: types.Order, prior_price: f64, has_prior: bool, price: f64
     ret Crossed(prior_price, price, o.trigger_price)
 end
 
-/*
- * When the trade should close, given the moment it fills.
- *
- * A floating expiry lands on a candle close; one that would be shorter than
- * the broker's minimum rolls forward a candle at a time until it is long
- * enough. `close_at` is 0 for a fixed trade, which is sent as a duration.
- */
 pub func ResolveExpiry(o: types.Order, entry_time: f64, min_duration: i64, close_at &: f64, rolled &: i64): i64:
     close_at = 0.0
     rolled = 0 as i64
@@ -539,8 +457,6 @@ pub func ResolveExpiry(o: types.Order, entry_time: f64, min_duration: i64, close
     ret 0
 end
 
-// Boots the engine: re-attach everything that was live, and refuse to guess
-// about an order that was mid-flight when the process died.
 pub func Start(c: config.Config):
     _config = c
     _started = true
@@ -575,7 +491,6 @@ pub func Stop():
     broker.CloseAll()
 end
 
-// The live price of a symbol, borrowing a session when none is open.
 pub func Price(mode: str, symbol: str, wait_ms: i64): f64:
     existing := broker.Find(mode, symbol)
     if existing >= 0:
@@ -615,8 +530,6 @@ pub func Balance(mode: str, wait_ms: i64): f64:
     ret balance
 end
 
-// The tradable symbols of one account, waiting for the list if it has not
-// arrived yet.
 pub func Assets(mode: str, wait_ms: i64): Vector<symbols.Asset>:
     if broker.AssetCount(mode) > 0: ret broker.Assets(mode) end
 
@@ -630,7 +543,6 @@ pub func Assets(mode: str, wait_ms: i64): Vector<symbols.Asset>:
     ret broker.Assets(mode)
 end
 
-// Registers an order and starts following it.
 pub func CreateOrder(o: types.Order): types.Order:
     mut row := o
     if !row.has_reference:
@@ -647,7 +559,6 @@ pub func CreateOrder(o: types.Order): types.Order:
     ret saved
 end
 
-// Why an order could not be called off, or "" when it was.
 pub func Cancel(order_id: str): str:
     o := store.Get(order_id)
     if o.id.len() == 0: ret "not_found" end
@@ -661,7 +572,6 @@ pub func Cancel(order_id: str): str:
     ret ""
 end
 
-// Re-attaches an account's orders after its credentials changed.
 pub func ReloadCredentials(mode: str):
     mut i := 0
     while i < _attachments.len():
@@ -686,8 +596,6 @@ pub func ReloadCredentials(mode: str):
     end
 end
 
-// One turn of the machine: read the sockets, move every order that can
-// move, and pick up whatever the broker settled.
 pub func Step(pump_ms: int):
     broker.Pump(pump_ms, _config.max_tick_gap)
 
@@ -707,18 +615,10 @@ pub func Step(pump_ms: int):
     CheckAuth()
 end
 
-/*
- * The once-a-second duties: orders whose validity ran out, armed orders
- * whose candle opened in a quiet market, and trades the broker has gone
- * quiet about.
- */
 pub func Housekeep():
     now := timex.NowSeconds()
     mut i := 0
     while i < _attachments.len():
-        // Anything in here may detach the order it is looking at, which
-        // shifts the next one into this index. Compare the length instead of
-        // stepping blindly, or a housekeeping turn skips an order.
         before := _attachments.len()
         HousekeepOne(i, now)
         if _attachments.len() == before: i = i + 1 end
@@ -727,7 +627,6 @@ pub func Housekeep():
     broker.CloseIdle(_config.session_idle_ttl)
 end
 
-// The next thing that happened, or an event with an empty kind.
 pub func TakeEvent(): Event:
     if _events.len() == 0: ret Event {} end
     e := _events.get(0)

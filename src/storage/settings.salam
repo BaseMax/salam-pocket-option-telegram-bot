@@ -1,5 +1,3 @@
-// The defaults a user changes with /set, and the credentials they send with
-// /session. Everything here outlives a restart, in the settings table.
 package settings
 
 import str
@@ -53,7 +51,6 @@ pub func SetCandles(count: i64):
     store.PutSetting("candles", str.FromInt(count))
 end
 
-// The payout floor new orders start with, in percent; 0 turns the check off.
 pub func MinPayout(): i64:
     ret store.GetSettingInt("min_payout", _config.default_min_payout)
 end
@@ -62,7 +59,6 @@ pub func SetMinPayout(percent: i64):
     store.PutSetting("min_payout", str.FromInt(percent))
 end
 
-// Seconds at the end of a candle where a floating trade is refused.
 pub func BlockLast(): i64:
     ret store.GetSettingInt("block_last", _config.default_block_last)
 end
@@ -71,8 +67,6 @@ pub func SetBlockLast(seconds: i64):
     store.PutSetting("block_last", str.FromInt(seconds))
 end
 
-// The two candle-gap sets new orders start with, each a subset of
-// above/equal/below.
 pub func GapConfirm(): str:
     ret store.GetSetting("gap_confirm", "")
 end
@@ -121,7 +115,6 @@ pub func SetNotifyBalance(on_off: str):
     store.PutSetting("notify_balance", on_off)
 end
 
-// The chats allowed to drive this bot, as one comma separated list.
 pub func Owners(): str:
     ret store.GetSetting("owners", "")
 end
@@ -150,8 +143,6 @@ pub func AddOwner(chat_id: i64):
     end
 end
 
-// The stored session for one account: what /session wrote, else what the
-// environment seeded.
 pub func Ssid(mode: str): str:
     mut stored := store.GetSetting("ssid_" + mode, "")
     if stored.len() > 0: ret stored end

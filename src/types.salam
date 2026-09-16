@@ -1,47 +1,29 @@
-// The vocabulary the whole bot speaks: one order, its states, and the
-// account it belongs to.
 package types
 
-// Account: which broker cluster an order lives on. Demo and real are
-// physically different servers, never one account with a flag.
 pub const MODE_DEMO := "demo"
 pub const MODE_REAL := "real"
 
 pub const CALL := "call"
 pub const PUT := "put"
 
-// How the order enters once the price arrives.
 pub const TRIGGER_TOUCH := "touch"
 pub const TRIGGER_NEXT_CANDLE := "next_candle"
 
-// How the trade ends: a fixed number of seconds, or the close of a candle.
 pub const EXPIRY_FIXED := "fixed"
 pub const EXPIRY_FLOATING := "floating"
 
-// Chart the candles are drawn as. Only the shape changes; entry and close
-// are always the real market price.
 pub const CHART_CANDLE := "candle"
 pub const CHART_HEIKIN_ASHI := "heikin_ashi"
 pub const CHART_LINE := "line"
 
-/*
- * The candle gap: where this candle opened against the close of the one
- * before it. The broker draws its candles from the same tick stream, so the
- * two are not always the same price, and a trader who cares which way the
- * market jumped over the boundary cares about exactly these three.
- */
 pub const GAP_ABOVE := "above"
 pub const GAP_EQUAL := "equal"
 pub const GAP_BELOW := "below"
 
-// Which side the market sat on when the order was created, so a trigger is
-// a crossing and never mere proximity.
 pub const SIDE_ABOVE := "above"
 pub const SIDE_BELOW := "below"
 pub const SIDE_ANY := "any"
 
-// The order's life. Only pending and armed can still be called off: once
-// it is being sent, the broker may already have taken it.
 pub const ST_PENDING := "pending"
 pub const ST_ARMED := "armed"
 pub const ST_PLACING := "placing"
@@ -50,16 +32,10 @@ pub const ST_WON := "won"
 pub const ST_LOST := "lost"
 pub const ST_DRAW := "draw"
 pub const ST_CANCELLED := "cancelled"
-// The price arrived but the broker's payout was under the order's floor,
-// so nothing was sent.
 pub const ST_SKIPPED := "skipped"
 pub const ST_FAILED := "failed"
 pub const ST_EXPIRED := "expired"
 
-// What the user asked for, before it becomes a stored order. The one-line
-// command and the wizard panel both produce this shape.
-@en "OrderSpec"
-@fa "مشخصات سفارش"
 pub struct OrderSpec:
     pub symbol: str = ""
     pub direction: str = CALL
@@ -72,23 +48,13 @@ pub struct OrderSpec:
     pub candle_count: i64 = 1
     pub amount: f64 = 1.0
     pub account_mode: str = MODE_DEMO
-    // 0 means the order waits for its price forever.
     pub valid_for_seconds: i64 = 0
-    // The payout the broker must be quoting when the trade is sent, in
-    // percent. 0 means the order does not care.
     pub min_payout: i64 = 0
-    // Refuse a floating trade that would start in the last N seconds of its
-    // candle, where there is no candle left to trade. 0 means never refuse.
     pub block_last_seconds: i64 = 0
-    // The candle gap conditions, each a subset of above/equal/below: one the
-    // gap must be in for the trade to go, one that calls it off.
     pub gap_confirm: str = ""
     pub gap_cancel: str = ""
 end
 
-// A stored order: the spec plus everything the engine learns about it.
-@en "Order"
-@fa "سفارش"
 pub struct Order:
     pub id: str = ""
     pub chat_id: i64 = 0
@@ -109,19 +75,14 @@ pub struct Order:
     pub timeframe_seconds: i64 = 60
     pub chart_type: str = CHART_CANDLE
 
-    // All three are read the moment the trade would be sent, not when the
-    // order was written; 0 and "" mean the order does not ask.
     pub min_payout: i64 = 0
     pub block_last_seconds: i64 = 0
     pub gap_confirm: str = ""
     pub gap_cancel: str = ""
 
     pub status: str = ST_PENDING
-    // The market price when the order was created, which decides which way
-    // the price has to travel to count as a touch.
     pub reference_price: f64 = 0.0
     pub has_reference: bool = false
-    // Epoch second after which an untriggered order is abandoned; 0 = never.
     pub valid_until: f64 = 0.0
 
     pub triggered_price: f64 = 0.0
@@ -141,7 +102,6 @@ pub struct Order:
     pub updated_at: f64 = 0.0
 end
 
-// A gap set in one spelling, whichever order the relations arrived in.
 pub func GapListMake(equal: bool, above: bool, below: bool): str:
     mut out := ""
     if equal: out = GAP_EQUAL end
@@ -168,7 +128,6 @@ pub func GapListHas(list: str, relation: str): bool:
     ret false
 end
 
-// The set with one relation switched on or off, for a panel button.
 pub func GapListToggle(list: str, relation: str): str:
     mut equal := GapListHas(list, GAP_EQUAL)
     mut above := GapListHas(list, GAP_ABOVE)
@@ -183,7 +142,6 @@ pub func IsActive(status: str): bool:
     ret status == ST_PENDING || status == ST_ARMED || status == ST_PLACING || status == ST_OPEN
 end
 
-// Only these two can still be cancelled; an open binary option cannot.
 pub func IsCancellable(status: str): bool:
     ret status == ST_PENDING || status == ST_ARMED
 end

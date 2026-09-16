@@ -1,5 +1,3 @@
-// Durations, symbols, the command parser, the trading rules, the store,
-// the settings, every notification, and the polling bookkeeping.
 package main
 
 import os
@@ -21,8 +19,6 @@ import settings "../src/storage/settings.salam"
 import tgbot "../src/telegram/tgbot.salam"
 import engine_events "../src/engine/engine.salam"
 
-// The stdlib's assertions take no message; these keep one, because a
-// failing line should say what property it was checking.
 func EqInt(got: i64, want: i64, message: str):
     testing.AssertMsg(got == want, message)
 end
@@ -84,7 +80,6 @@ func TestFormatting():
     EqStr(timex.FormatDurationFa(5400 as i64), "1 ساعت و 30 دقیقه", "Persian duration")
     EqStr(timex.FormatDurationFa(90061 as i64), "1 روز و 1 ساعت و 1 دقیقه و 1 ثانیه", "every Persian unit")
 
-    // Every compact form reads back as the same number of seconds.
     EqInt(timex.ParseDuration(timex.FormatDuration(5400 as i64)), 5400, "round trip 5400")
     EqInt(timex.ParseDuration(timex.FormatDuration(90061 as i64)), 90061, "round trip 90061")
 
@@ -120,13 +115,12 @@ func TestSymbols():
     _u := symbols.Resolve("zzzz", assets, status, matched, twin)
     EqStr(status, "unknown", "an unknown symbol")
 
-    // The broker spells this one with a dash inside the ticker itself
-    // ("ADA-USD_otc"), not as cosmetic punctuation. Normalize throws that
-    // dash away no matter how the user types it, so the match has to fall
-    // back to comparing both sides with punctuation stripped.
     mut crypto := Vector {} as Vector<symbols.Asset>
     defer crypto.free()
     crypto.push(symbols.Asset { symbol = "ADA-USD_otc", name = "Cardano OTC", payout = 92 as i64, is_open = true })
+    crypto.push(symbols.Asset { symbol = "BTC-USD", name = "Bitcoin", payout = 80 as i64, is_open = true })
+    crypto.push(symbols.Asset { symbol = "SHIBA-INU-USD_otc", name = "Shiba Inu OTC", payout = 85 as i64, is_open = true })
+    crypto.push(symbols.Asset { symbol = "1INCH-USD_otc", name = "1inch OTC", payout = 75 as i64, is_open = true })
 
     _c1 := symbols.Resolve("ADA-USD_OTC", crypto, status, matched, twin)
     EqStr(status, "corrected", "a dash inside the ticker still resolves")
@@ -140,13 +134,23 @@ func TestSymbols():
     EqStr(status, "corrected", "underscores in place of the dash resolve too")
     EqStr(matched.symbol, "ADA-USD_otc", "matched the real broker symbol")
 
+    _c4 := symbols.Resolve("BTC/USD", crypto, status, matched, twin)
+    EqStr(status, "corrected", "a weekday pair with a slash resolves too")
+    EqStr(matched.symbol, "BTC-USD", "matched the weekday listing")
+
+    _c5 := symbols.Resolve("SHIBAINUUSD_OTC", crypto, status, matched, twin)
+    EqStr(status, "corrected", "a two-dash ticker resolves with every dash dropped")
+    EqStr(matched.symbol, "SHIBA-INU-USD_otc", "matched the real broker symbol")
+
+    _c6 := symbols.Resolve("1INCH-USD_OTC", crypto, status, matched, twin)
+    EqStr(status, "corrected", "a digit-led ticker still resolves")
+    EqStr(matched.symbol, "1INCH-USD_otc", "matched the real broker symbol")
+
     mut ranked := symbols.Suggest("EUR", assets)
     defer ranked.free()
     EqInt(ranked.len(), 2, "two suggestions")
     EqStr(ranked.get(0).symbol, "EURUSD_otc", "the better payout leads")
 
-    // The listing is the same search without the hint-sized cap, and it is
-    // what /symbols pages through.
     mut found := symbols.Search("USD", assets)
     defer found.free()
     EqInt(found.len(), 2, "the search keeps every match")
@@ -160,13 +164,6 @@ func TestSymbols():
     EqStr(open.get(1).symbol, "EURUSD", "and the rest follow it down")
 end
 
-/*
- * The payout floor.
- *
- * The percentage beside a symbol moves all day, so the only reading that
- * decides anything is the one taken in the second the trade would be sent.
- * These are the rules that reading is put through.
- */
 func TestPayoutFloor():
     Truthy(engine.PayoutAllows(0 as i64, 35 as i64, true), "an order with no floor takes any payout")
     Truthy(engine.PayoutAllows(90 as i64, 92 as i64, true), "a fatter payout passes")
@@ -261,10 +258,6 @@ func TestTrigger():
     Falsy(engine.IsTouched(any, 1.06, true, 1.07), "never crossed")
 end
 
-/*
- * The candle tail (item 3): a floating trade that starts in the last
- * seconds of its candle has no candle left to run in.
- */
 func TestCandleTail():
     Truthy(engine.TailAllows(types.EXPIRY_FLOATING, 5 as i64, 30.0), "half a candle to go is fine")
     Truthy(engine.TailAllows(types.EXPIRY_FLOATING, 5 as i64, 5.0), "exactly the floor is still allowed")
@@ -275,20 +268,13 @@ func TestCandleTail():
         "a fixed trade carries its own length, so the candle boundary is not its business")
 end
 
-/*
- * The candle gap (item 4): where this candle opened against the close of
- * the one before it, as two independent conditions over the same three
- * states - one that has to hold, one that calls the trade off.
- */
 func TestCandleGap():
     EqStr(engine.GapRelation(1.0855, 1.0850), types.GAP_ABOVE, "opened above the last close")
     EqStr(engine.GapRelation(1.0845, 1.0850), types.GAP_BELOW, "opened below it")
     EqStr(engine.GapRelation(1.0850, 1.0850), types.GAP_EQUAL, "opened on it")
 
-    // Nothing asked, nothing refused.
     Truthy(engine.GapAllows("", "", types.GAP_ABOVE), "an order with no gap condition trades")
 
-    // The cancel condition.
     Falsy(engine.GapAllows("", types.GAP_ABOVE, types.GAP_ABOVE), "a cancelled state stops the trade")
     Truthy(engine.GapAllows("", types.GAP_ABOVE, types.GAP_BELOW), "another state goes through")
     cancel_two := types.GapListMake(true, true, false)
@@ -297,18 +283,15 @@ func TestCandleGap():
     Falsy(engine.GapAllows("", cancel_two, types.GAP_ABOVE), "and so does the other")
     Truthy(engine.GapAllows("", cancel_two, types.GAP_BELOW), "the third still trades")
 
-    // The confirm condition.
     Truthy(engine.GapAllows(types.GAP_ABOVE, "", types.GAP_ABOVE), "the confirmed state trades")
     Falsy(engine.GapAllows(types.GAP_ABOVE, "", types.GAP_EQUAL), "an unconfirmed one does not")
     Falsy(engine.GapAllows(types.GAP_ABOVE, "", types.GAP_BELOW), "nor the last one")
 
-    // Both at once, and the tie.
     Truthy(engine.GapAllows(types.GapListMake(true, true, false), types.GAP_ABOVE, types.GAP_EQUAL),
         "confirmed and not cancelled trades")
     Falsy(engine.GapAllows(types.GapListMake(true, true, false), types.GAP_ABOVE, types.GAP_ABOVE),
         "a state in both lists is cancelled: the refusal is the certain one")
 
-    // The set, as the panel toggles it.
     mut set := types.GapListToggle("", types.GAP_BELOW)
     EqStr(set, "below", "one tap selects a state")
     set = types.GapListToggle(set, types.GAP_EQUAL)
@@ -319,7 +302,6 @@ func TestCandleGap():
     Falsy(types.GapListHas("equal,below", types.GAP_ABOVE), "and does not invent it")
     Falsy(types.GapListHas("", types.GAP_EQUAL), "an empty set holds nothing")
 
-    // What the user may type.
     mut list := ""
     Truthy(parse.GapList("بیشتر,برابر", list), "Persian words parse")
     EqStr(list, "equal,above", "into the one spelling")
@@ -332,11 +314,6 @@ func TestCandleGap():
     Falsy(parse.GapList("sideways", list), "a word that is not one of the three is refused")
 end
 
-/*
- * The close of a candle is only known when we watched that candle end.
- * This is what stands between a gap condition and a number invented from a
- * stream that was down.
- */
 func TestCandleTracking():
     Truthy(broker.CloseIsKnown(1000.0, 1060.0, 60 as i64, true, false), "one boundary, on a live stream")
     Falsy(broker.CloseIsKnown(1000.0, 1120.0, 60 as i64, true, false), "a jump over a whole candle knows nothing")
@@ -364,7 +341,6 @@ func TestExpiry():
     _d3 := engine.ResolveExpiry(three, entry, 5 as i64, close_at, rolled)
     EqFloat(close_at, timex.CandleCloseTime(entry, 60 as i64) + 120.0, "three candles out")
 
-    // Five seconds before the minute closes, with a 30 second floor.
     late := 1787911255.0
     _d4 := engine.ResolveExpiry(floating, late, 30 as i64, close_at, rolled)
     EqInt(rolled, 1, "it rolls one candle forward")
@@ -494,8 +470,6 @@ func TestCopy():
 end
 
 func TestBigNumbers():
-    // Telegram ids outgrew 32 bits years ago, and a supergroup id is around
-    // -10^12. str.ToInt is 32 bits wide, so these must not go through it.
     EqInt(parse.ParseInt64("169298261"), 169298261, "an ordinary chat id")
     EqInt(parse.ParseInt64("5123456789"), 5123456789, "a modern user id, past 2^31")
     EqInt(parse.ParseInt64("-1001234567890"), 0 - 1001234567890, "a supergroup id")
@@ -639,14 +613,6 @@ func TestNotifications():
     EqStr(tgbot.EventText(unknown), "", "an event with no wording says nothing")
 end
 
-/*
- * A whole account's symbol list, cut into messages.
- *
- * The listing used to stop at thirty rows in one message, which for an
- * account with 115 open markets meant most of them were never shown. What
- * matters here is that nothing is lost in the cutting and that no piece is
- * bigger than Telegram will take.
- */
 func TestSymbolPages():
     mut list := Vector {} as Vector<symbols.Asset>
     defer list.free()
@@ -676,7 +642,6 @@ func TestSymbolPages():
         k = k + 1
     end
 
-    // Every symbol on exactly one page, in the order it was handed over.
     mut joined := ""
     mut j := 0
     while j < pages.len():
@@ -703,9 +668,6 @@ func TestSymbolPages():
 end
 
 func TestPolling():
-    // A canned getUpdates result, run through the same path the loop uses.
-    // The bot has no token here, so Dispatch renders and tries to send;
-    // nothing leaves the process and what is checked is the bookkeeping.
     Truthy(store.Open(":memory:"), "a database for the poll test")
     mut c := config.Config {}
     c.admin_ids = "5123456789"
@@ -724,7 +686,6 @@ func TestPolling():
     EqInt(tgbot.Apply(batch) as i64, 2, "a batch is handled in order")
     EqInt(tgbot.Offset(), 13, "the offset ends past the last of them")
 
-    // Telegram has been known to answer out of order after a restart.
     stale := `[{"update_id":5,"message":{"message_id":4,"date":0,"chat":{"id":5123456789,"type":"private"},"text":"/id"}}]`
     _n := tgbot.Apply(stale)
     EqInt(tgbot.Offset(), 13, "an older update never drags the offset backwards")
@@ -740,15 +701,6 @@ func TestPolling():
     store.Close()
 end
 
-/*
- * The /new panel, driven the way Telegram drives it.
- *
- * Canned updates through the real dispatcher: the taps land on the real
- * keyboard handler and the panel is rendered on every one of them. The
- * conditions are only worth anything if the buttons that set them are
- * wired to the order that carries them, and this is the seam where a
- * button that renders but sets nothing would show up.
- */
 func TestPanel():
     Truthy(store.Open(":memory:"), "a database for the panel test")
     mut c := config.Config {}
@@ -762,8 +714,6 @@ func TestPanel():
         `,"type":"private"},"text":"/new"}}]`)
     Truthy(wizard.Has(5123456789 as i64), "the panel is open")
 
-    // Every tap goes through the dispatcher, so the panel is re-rendered
-    // each time and a broken render would take the test with it.
     _menu := tgbot.Apply(`[{"update_id":101,"callback_query":{"id":"q1","data":"w:gap","message":{"message_id":2,"date":0,"chat":{"id":` + chat + `,"type":"private"},"text":"panel"}}}]`)
     _c1 := tgbot.Apply(`[{"update_id":102,"callback_query":{"id":"q2","data":"w:gapc:above","message":{"message_id":2,"date":0,"chat":{"id":` + chat + `,"type":"private"},"text":"panel"}}}]`)
     _x1 := tgbot.Apply(`[{"update_id":103,"callback_query":{"id":"q3","data":"w:gapx:below","message":{"message_id":2,"date":0,"chat":{"id":` + chat + `,"type":"private"},"text":"panel"}}}]`)
@@ -781,7 +731,6 @@ func TestPanel():
     EqStr(spec.gap_confirm, "equal", "and tapping it again takes it back off")
     EqStr(spec.gap_cancel, "below", "without touching the other condition")
 
-    // The typed field: the button opens the question, the next message answers it.
     _ask := tgbot.Apply(`[{"update_id":106,"callback_query":{"id":"q6","data":"w:tail","message":{"message_id":2,"date":0,"chat":{"id":` + chat + `,"type":"private"},"text":"panel"}}}]`)
     Truthy(wizard.IsAwaiting(5123456789 as i64), "the panel is waiting for the answer")
     _ans := tgbot.Apply(`[{"update_id":107,"message":{"message_id":3,"date":0,"chat":{"id":` + chat + `,"type":"private"},"text":"۷"}}]`)

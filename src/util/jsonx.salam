@@ -1,7 +1,3 @@
-// The little bit of JSON the stdlib's object reader does not cover: broker
-// frames arrive as arrays of arrays, and every value in them is defensive
-// territory. Nothing here throws; a value that is not what it should be
-// reads as zero or "".
 package jsonx
 
 import str
@@ -11,10 +7,6 @@ func IsSpace(c: str): bool:
     ret c == " " || c == "\n" || c == "\r" || c == "\t"
 end
 
-// The elements of a top-level JSON array, each still raw JSON.
-//
-// Scans bytes rather than parsing: strings and nested {}/[] are skipped
-// over, so a comma inside them is never mistaken for a separator.
 pub func SplitArray(raw: str): Vector<str>:
     mut out := Vector {} as Vector<str>
     text := str.Trim(raw)
@@ -54,7 +46,6 @@ pub func SplitArray(raw: str): Vector<str>:
     ret out
 end
 
-// One element of a JSON array, or "" when the index is past its end.
 pub func ElementAt(raw: str, index: int): str:
     mut items := SplitArray(raw)
     defer items.free()
@@ -88,8 +79,6 @@ pub func Unquote(raw: str): str:
     ret out
 end
 
-// A number out of a raw JSON value. Anything unreadable, null included,
-// reads as 0 - callers that care use a separate "present" flag.
 pub func AsFloat(raw: str): f64:
     text := str.Trim(raw)
     if text.len() == 0 || text == "null": ret 0.0 end
@@ -110,7 +99,6 @@ pub func IsNull(raw: str): bool:
     ret t.len() == 0 || t == "null"
 end
 
-// A field of a JSON object, as text with the quotes taken off.
 pub func Field(obj: str, key: str): str:
     ret str.Trim(json.Get(obj, key))
 end
@@ -127,8 +115,6 @@ pub func FieldBool(obj: str, key: str): bool:
     ret AsBool(json.Get(obj, key))
 end
 
-// The first field of `keys` the object actually has, for brokers that
-// renamed one between releases (closeTimestamp vs closeTime).
 pub func FieldAny(obj: str, key_a: str, key_b: str): str:
     v := Field(obj, key_a)
     if v.len() > 0: ret v end

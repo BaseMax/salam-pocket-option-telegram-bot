@@ -1,6 +1,3 @@
-// The full order life, on the demo account: arm at the current price so it
-// triggers at once, open a 60 second trade for $1, and wait for the broker
-// to settle it. Demo only - it refuses to run against a real account.
 package main
 
 import time
@@ -50,7 +47,6 @@ func main:
     o.account_mode = types.MODE_DEMO
     o.symbol = symbol
     o.direction = types.CALL
-    // The trigger sits on the market, so the very next tick is a touch.
     o.trigger_price = price
     o.trigger_mode = types.TRIGGER_TOUCH
     o.amount = 1.0

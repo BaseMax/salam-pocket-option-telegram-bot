@@ -1,11 +1,3 @@
-/*
- * The session table hands out indices that the engine keeps.
- *
- * This check opens two sessions, lets one go idle and be closed, and then
- * asks whether the other's index still names its own socket. Before the
- * table stopped removing entries, it named the wrong one - an order would
- * have watched another symbol's price.
- */
 package main
 
 import str
@@ -46,7 +38,6 @@ func main:
     Check(broker.Get(first).symbol == "EURUSD_otc", "the first index names its own symbol")
     Check(broker.Get(second).symbol == "GBPUSD_otc", "and so does the second")
 
-    // Let them settle, so both are authenticated before anything is closed.
     settle_ms := time.NowMillis() + 4000 as i64
     while time.NowMillis() < settle_ms:
         broker.Pump(100, c.max_tick_gap)
@@ -55,10 +46,6 @@ func main:
     println "letting the first go idle and closing it"
     broker.Release(first)
 
-    // CloseIdle closes what has been idle *longer* than the ttl, so a
-    // just-released session survives the first sweep. Wait on the clock, not
-    // on a pump count: with ticks arriving the pump returns immediately and
-    // a fixed number of turns is no time at all.
     until_ms := time.NowMillis() + 1500 as i64
     while time.NowMillis() < until_ms:
         broker.Pump(100, c.max_tick_gap)
@@ -82,9 +69,6 @@ func main:
     end
     Check(broker.Get(third).symbol == "AUDCAD_otc", "and the reused slot is the new symbol")
 
-    // A notification's balance suffix asks the broker, not a control session:
-    // the account balance arrives on every authenticated socket, and until
-    // this was fixed only a session opened by /balance could answer.
     mut balance := 0.0
     known := broker.CachedBalance(types.MODE_DEMO, balance)
     Check(known, "the balance is known from a symbol session alone")

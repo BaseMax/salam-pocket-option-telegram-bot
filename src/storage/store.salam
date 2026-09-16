@@ -1,5 +1,3 @@
-// Where every order and every setting lives. SQLite is the source of truth:
-// the engine re-reads it on boot, so a restart loses nothing.
 package store
 
 import parse "../telegram/parse.salam"
@@ -59,16 +57,12 @@ const COLUMNS := "id, chat_id, account_mode, symbol, direction, trigger_price, t
 
 const ID_ALPHABET := "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
-// The one connection this process uses. Held as the raw handle so no struct
-// from another package is ever a global's default.
 mut _handle := null as void*
 
 func Db(): sqlite.Database:
     ret sqlite.Database { handle = _handle }
 end
 
-// A value that may be absent is stored as NULL; these two keep the "not
-// set" case honest instead of pretending it is zero.
 func TextOrNull(value: str): str:
     if value.len() == 0: ret "NULL" end
     ret "'" + str.Replace(value, "'", "''") + "'"
@@ -154,7 +148,6 @@ func FreshId(): str:
     ret "X" + str.FromInt(timex.NowSeconds() as i64)
 end
 
-// Opens the database and creates the schema if this is a first run.
 pub func Open(path: str): bool:
     d := sqlite.Open(path)
     if !sqlite.Ok(d): ret false end
@@ -162,9 +155,6 @@ pub func Open(path: str): bool:
     _e1 := sqlite.Exec(Db(), "PRAGMA journal_mode = WAL;")
     _e2 := sqlite.Exec(Db(), "PRAGMA busy_timeout = 5000;")
     _e3 := sqlite.Exec(Db(), SCHEMA)
-    // A database written before the payout floor existed has no column for
-    // it. SQLite refuses to add a column twice, and that refusal is the
-    // answer we wanted, so the error is not one.
     _e4 := sqlite.Exec(Db(), "ALTER TABLE orders ADD COLUMN min_payout INTEGER NOT NULL DEFAULT 0")
     _e5 := sqlite.Exec(Db(), "ALTER TABLE orders ADD COLUMN block_last_seconds INTEGER NOT NULL DEFAULT 0")
     _e6 := sqlite.Exec(Db(), "ALTER TABLE orders ADD COLUMN gap_confirm TEXT NOT NULL DEFAULT ''")
@@ -179,8 +169,6 @@ pub func Close():
     _handle = null as void*
 end
 
-// Writes an order back in full. Every state change goes through here, so a
-// crash can never leave a half-written row.
 pub func Save(o: types.Order):
     sql := "UPDATE orders SET " +
         "chat_id = " + str.FromInt(o.chat_id) +
@@ -263,7 +251,6 @@ pub func Create(o: types.Order): types.Order:
     ret row
 end
 
-// An order by id. The caller checks `.id` for "" to see whether it existed.
 pub func Get(id: str): types.Order:
     mut found := types.Order {}
     rows := sqlite.Query(Db(), "SELECT " + COLUMNS + " FROM orders WHERE id = " + Quote(id))
@@ -281,7 +268,6 @@ pub func FindByDealId(deal_id: str): types.Order:
     ret found
 end
 
-// Every order the engine should still be following, oldest first.
 pub func ListActive(): Vector<types.Order>:
     ret QueryOrders("SELECT " + COLUMNS + " FROM orders WHERE status IN ('pending','armed','placing','open') ORDER BY created_at ASC")
 end
@@ -305,7 +291,6 @@ pub func CountActiveByChat(chat_id: i64): i64:
     ret n
 end
 
-// Wins, losses, draws and net profit since a moment, for /stats.
 pub func Summary(chat_id: i64, since: f64, won &: i64, lost &: i64, draw &: i64, profit &: f64):
     won = 0 as i64
     lost = 0 as i64
@@ -324,8 +309,6 @@ pub func Summary(chat_id: i64, since: f64, won &: i64, lost &: i64, draw &: i64,
     _f := sqlite.Finish(rows)
 end
 
-// The settings table is a plain key/value store; the bot keeps the defaults
-// a user changes with /set there, so they outlive a restart.
 pub func PutSetting(key: str, value: str):
     _e := sqlite.Exec(Db(), "INSERT INTO settings (key, value) VALUES (" + Quote(key) + ", " + Quote(value) +
         ") ON CONFLICT(key) DO UPDATE SET value = " + Quote(value))

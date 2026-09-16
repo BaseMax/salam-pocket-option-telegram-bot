@@ -1,4 +1,3 @@
-// Everything the process reads from its environment, once, at startup.
 package config
 
 import parse "telegram/parse.salam"
@@ -6,8 +5,6 @@ import os
 import str
 import timex "util/timex.salam"
 
-@en "Config"
-@fa "پیکربندی"
 pub struct Config:
     pub token: str = ""
     pub admin_ids: str = ""
@@ -20,18 +17,12 @@ pub struct Config:
 
     pub db_path: str = "./data/bot.sqlite"
     pub heartbeat_path: str = "./data/heartbeat"
-    // Minutes east of UTC for every timestamp the bot prints. Tehran is
-    // +3:30 all year, since Iran no longer observes daylight saving.
     pub timezone_offset: i64 = 210
 
     pub default_amount: f64 = 1.0
     pub default_timeframe: i64 = 60
     pub default_duration: i64 = 60
-    // The payout floor a new order starts with, in percent. 0 means orders
-    // do not ask about the payout unless the user says so.
     pub default_min_payout: i64 = 0
-    // Seconds at the end of a candle in which a floating trade is refused.
-    // The default is on: entering here is the case it exists to stop.
     pub default_block_last: i64 = 5
 
     pub min_amount: f64 = 1.0
@@ -63,8 +54,6 @@ func EnvFloat(name: str, fallback: f64): f64:
     ret str.ToFloat(v)
 end
 
-// Reads the environment into a Config. The token is the only value the bot
-// cannot start without; Ok() reports whether it was there.
 pub func Load(): Config:
     mut c := Config {}
     c.token = str.Trim(os.Env("TELEGRAM_BOT_TOKEN"))
@@ -102,8 +91,6 @@ pub func Ok(c: Config): bool:
     ret c.token.len() >= 10
 end
 
-// The endpoints for one account, newest first; the client rotates through
-// them when one keeps refusing.
 pub func Servers(mode: str): Vector<str>:
     mut v := Vector {} as Vector<str>
     if mode == "demo":
@@ -121,19 +108,15 @@ pub func Servers(mode: str): Vector<str>:
     ret v
 end
 
-// The Origin header the broker expects with those endpoints.
 pub func Origin(): str:
     ret "https://p.finance"
 end
 
-// The trade's real length, whichever way its expiry is written, for the
-// limit check before anything is sent to the broker.
 pub func EffectiveDuration(expiry_mode: str, duration_seconds: i64, timeframe_seconds: i64, candle_count: i64): i64:
     if expiry_mode == "fixed": ret duration_seconds end
     ret timeframe_seconds * candle_count
 end
 
-// Says in Persian what is out of bounds, or "" when the order is allowed.
 pub func CheckLimits(c: Config, amount: f64, expiry_mode: str, duration_seconds: i64, timeframe_seconds: i64, candle_count: i64): str:
     if amount < c.min_amount || amount > c.max_amount:
         ret "مبلغ باید بین " + timex.FormatMoney(c.min_amount) + " و " + timex.FormatMoney(c.max_amount) + " باشد."

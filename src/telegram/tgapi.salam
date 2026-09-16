@@ -1,6 +1,3 @@
-// telegram.bot covers sending and polling; anything that needs parse_mode,
-// a keyboard or an alert goes through Call() with its own parameters, which
-// is the same transport with nothing hidden.
 package tgapi
 
 import parse "parse.salam"
@@ -9,8 +6,6 @@ import telegram.bot
 import encoding.json
 import texts "texts.salam"
 
-@en "Keyboard"
-@fa "صفحه کلید"
 pub struct Keyboard:
     pub rows: str = ""
     pub current: str = ""
@@ -44,7 +39,6 @@ pub func Button(k &: Keyboard, label: str, data: str):
     k.empty = false
 end
 
-// Ends the current row; the next Button starts a new one.
 pub func Row(k &: Keyboard):
     CloseRow(k)
 end
@@ -63,7 +57,6 @@ pub func ForceReplyJson(placeholder: str): str:
     ret `{"force_reply":true,"input_field_placeholder":"` + json.Escape(placeholder) + `"}`
 end
 
-// Sends an HTML message and hands back its message id, or 0.
 pub func Send(b: bot.Bot, chat_id: i64, text: str, markup: str): i64:
     mut p := WithChat(chat_id)
     p.put("text", text)
@@ -80,8 +73,6 @@ pub func SendPlain(b: bot.Bot, chat_id: i64, text: str): i64:
     ret Send(b, chat_id, text, "")
 end
 
-// Rewrites a message. Returns false when Telegram refused, which for an
-// edit that changes nothing is not a failure worth reporting.
 pub func Edit(b: bot.Bot, chat_id: i64, message_id: i64, text: str, markup: str): bool:
     mut p := WithChat(chat_id)
     p.put("message_id", str.FromInt(message_id))
@@ -95,8 +86,6 @@ pub func Edit(b: bot.Bot, chat_id: i64, message_id: i64, text: str, markup: str)
     ret str.Contains(resp.description, "message is not modified")
 end
 
-// Rewrites a message we no longer have the formatting for: whatever
-// Telegram still holds, plus a line saying it is over.
 pub func EditPlain(b: bot.Bot, chat_id: i64, message_id: i64, text: str): bool:
     mut p := WithChat(chat_id)
     p.put("message_id", str.FromInt(message_id))
@@ -118,7 +107,6 @@ pub func Delete(b: bot.Bot, chat_id: i64, message_id: i64):
     _r := bot.Call(b, "deleteMessage", p)
 end
 
-// The little toast on a tapped button; `alert` makes it a dialog instead.
 pub func Answer(b: bot.Bot, query_id: str, text: str, alert: bool):
     mut p := Params()
     p.put("callback_query_id", query_id)
@@ -149,8 +137,6 @@ pub func PublishCommands(b: bot.Bot):
     _r := bot.Call(b, "setMyCommands", p)
 end
 
-// A "⏳ working…" placeholder that becomes the answer, so a slow command
-// still feels alive.
 pub func Notice(b: bot.Bot, chat_id: i64, text: str): i64:
     ret SendPlain(b, chat_id, text)
 end

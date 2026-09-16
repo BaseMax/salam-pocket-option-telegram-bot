@@ -1,5 +1,3 @@
-// Reading what the user typed: the one-line /order command, and every word
-// that names a choice. Persian and English spellings are equal citizens.
 package parse
 
 import str
@@ -7,11 +5,8 @@ import types "../types.salam"
 import timex "../util/timex.salam"
 import symbols "../pocket/symbols.salam"
 
-// ParseNumber says this when the text is not a number.
 pub const NOT_A_NUMBER := 0.0 - 1000000000.0
 
-// Lower-cases and unifies the Persian letter shapes so an alias matches
-// however it was typed.
 pub func NormalizeWord(raw: str): str:
     mut s := str.Trim(str.Lower(raw))
     s = str.Replace(s, "‌", "")
@@ -22,7 +17,6 @@ pub func NormalizeWord(raw: str): str:
     ret s
 end
 
-// A number in either digit set, with thousands separators forgiven.
 pub func ParseNumber(raw: str): f64:
     mut s := str.ToEnglishDigits(str.Trim(raw))
     s = str.Replace(s, ",", "")
@@ -56,15 +50,6 @@ pub func IsNumber(value: f64): bool:
     ret value != NOT_A_NUMBER
 end
 
-/*
- * A whole number, in 64 bits.
- *
- * `str.ToInt` is 32 bits wide, which is narrower than the world it is asked
- * about here: a Telegram chat id passed 2^31 years ago, a supergroup id is
- * around -10^12, and a millisecond timestamp is 13 digits. Anything wider
- * than an i32 came back truncated and wrong, so this reads the digits
- * itself.
- */
 pub func ParseInt64(raw: str): i64:
     text := str.Trim(str.ToEnglishDigits(raw))
     if text.len() == 0: ret 0 end
@@ -94,7 +79,6 @@ pub func ParseInt64(raw: str): i64:
     ret value
 end
 
-// buy / خرید / call / up …
 pub func Direction(raw: str): str:
     w := NormalizeWord(raw)
     if w == "buy" || w == "call" || w == "up" || w == "long" || w == "خرید" || w == "بالا" || w == "صعودی": ret types.CALL end
@@ -131,8 +115,6 @@ pub func AccountMode(raw: str): str:
     ret ""
 end
 
-// A payout floor in percent. Returns -1 when the text is not one, so a
-// caller can tell "0, meaning no condition" from "not a number at all".
 pub func Percent(raw: str): i64:
     mut text := str.Trim(raw)
     text = str.Replace(text, "%", "")
@@ -142,7 +124,6 @@ pub func Percent(raw: str): i64:
     ret (value + 0.5) as i64
 end
 
-// One of the three candle-gap states, however it was written.
 pub func GapWord(raw: str): str:
     w := NormalizeWord(raw)
     if w == "above" || w == "up" || w == "higher" || w == "greater" || w == "gt" || w == ">" ||
@@ -154,12 +135,6 @@ pub func GapWord(raw: str): str:
     ret ""
 end
 
-/*
- * A comma separated set of gap states, as `list`.
- *
- * Empty, "none" or "off" clears it, which is how a condition is taken back
- * off an order. Returns false when a word is not one of the three.
- */
 pub func GapList(raw: str, list &: str): bool:
     list = ""
     text := str.Trim(raw)
@@ -195,13 +170,6 @@ pub func OnOff(raw: str): str:
     ret ""
 end
 
-/*
- * Reads the one-line form: `SYMBOL buy|sell PRICE [key=value …]`.
- *
- * Anything the tail leaves alone keeps the value it had in `spec`, which is
- * how the user's stored defaults reach an order. Returns "" on success, or
- * the Persian complaint to show.
- */
 pub func ParseOrder(args: str, spec &: types.OrderSpec): str:
     mut words := str.Fields(str.Trim(args))
     defer words.free()

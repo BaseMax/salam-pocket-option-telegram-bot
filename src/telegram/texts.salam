@@ -1,6 +1,3 @@
-// Every word the user reads. Keeping the copy in one file is what let the
-// Persian wording be reviewed as a whole rather than hunted through the
-// command handlers.
 package texts
 
 import str
@@ -92,14 +89,11 @@ pub func ExpiryDescription(o: types.Order): str:
     ret count + " × " + timex.TimeframeLabel(o.timeframe_seconds) + " (شناور)"
 end
 
-// The payout floor as the user reads it; 0 means the order never asks.
 pub func PayoutLabel(min_payout: i64): str:
     if min_payout <= 0: ret "بدون شرط" end
     ret str.FromInt(min_payout) + "٪ و بالاتر"
 end
 
-// The three candle-gap states as the user picks them: where this candle
-// opened against the close of the one before it.
 pub func GapWord(relation: str): str:
     if relation == types.GAP_ABOVE: ret "بیشتر" end
     if relation == types.GAP_BELOW: ret "کمتر" end
@@ -121,7 +115,6 @@ pub func GapListLabel(list: str): str:
     ret out
 end
 
-// The whole gap condition on one line, or "" when the order has none.
 pub func GapSummary(confirm: str, cancel: str): str:
     if confirm.len() == 0 && cancel.len() == 0: ret "" end
     mut out := ""
@@ -202,8 +195,6 @@ pub func WithBalance(text: str, balance: f64, show: bool): str:
     ret text + "\n\n💵 موجودی حساب: <b>" + timex.FormatMoney(balance) + "</b>"
 end
 
-// Everywhere the user may type a duration accepts the same spellings; this
-// is the reminder shown wherever one is asked for.
 pub func TimeFormatHint(): str:
     ret "واحد را هرطور راحتید بنویسید: <code>s</code>/<code>sec</code>/<code>second</code>/<code>ثانیه</code> · " +
         "<code>m</code>/<code>min</code>/<code>minute</code>/<code>دقیقه</code> · <code>h</code>/<code>hour</code>/<code>ساعت</code> · " +

@@ -1,4 +1,3 @@
-// What a restart does to orders that were live when the process died.
 package main
 
 import str
@@ -53,8 +52,6 @@ func main:
     armed := Seed(types.ST_ARMED, "AUDCAD_otc")
     println "  pending=" + pending.id + " placing=" + placing.id + " armed=" + armed.id
 
-    // No credentials are configured here, so Start attaches without opening
-    // a socket: this is about what the database says afterwards.
     println "restarting the engine"
     engine.Start(c)
 

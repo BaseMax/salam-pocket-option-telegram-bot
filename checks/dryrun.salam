@@ -1,6 +1,3 @@
-// A scripted conversation: the same updates Telegram would deliver, fed
-// straight to the dispatcher. It never calls getUpdates, so it cannot take
-// updates from another instance of the bot that is already polling.
 package main
 
 import parse "../src/telegram/parse.salam"
@@ -68,8 +65,6 @@ func main:
     tgbot.Dispatch(Message(chat_id, 4 as i64, "/new"))
 
     println "→ tapping the chart button"
-    // The panel is the last message the bot sent; its id is not visible from
-    // here, so the tap is aimed at the live panel by passing 0.
     tgbot.Dispatch(Tap(chat_id, 5 as i64, 0 as i64, "w:chart", ""))
     time.Sleep(500)
 

@@ -1,6 +1,3 @@
-// Proves the Telegram half without touching the update queue: getMe, then
-// one message that is edited and deleted again, so nothing is left behind
-// and no getUpdates call can clash with another running instance.
 package main
 
 import parse "../src/telegram/parse.salam"
