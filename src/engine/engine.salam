@@ -438,7 +438,7 @@ end
 pub func Payout(mode: str, symbol: str, has_payout &: bool): i64:
     a := symbols.Find(broker.Assets(mode), symbol)
     has_payout = a.symbol.len() > 0 && a.has_payout
-    if !has_payout: ret 0 as i64 end
+    if !has_payout: ret 0 end
     ret a.payout
 end
 

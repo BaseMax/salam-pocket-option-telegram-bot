@@ -120,6 +120,26 @@ func TestSymbols():
     _u := symbols.Resolve("zzzz", assets, status, matched, twin)
     EqStr(status, "unknown", "an unknown symbol")
 
+    // The broker spells this one with a dash inside the ticker itself
+    // ("ADA-USD_otc"), not as cosmetic punctuation. Normalize throws that
+    // dash away no matter how the user types it, so the match has to fall
+    // back to comparing both sides with punctuation stripped.
+    mut crypto := Vector {} as Vector<symbols.Asset>
+    defer crypto.free()
+    crypto.push(symbols.Asset { symbol = "ADA-USD_otc", name = "Cardano OTC", payout = 92 as i64, is_open = true })
+
+    _c1 := symbols.Resolve("ADA-USD_OTC", crypto, status, matched, twin)
+    EqStr(status, "corrected", "a dash inside the ticker still resolves")
+    EqStr(matched.symbol, "ADA-USD_otc", "matched the real broker symbol")
+
+    _c2 := symbols.Resolve("ADAUSD_OTC", crypto, status, matched, twin)
+    EqStr(status, "corrected", "the dash-free spelling resolves too")
+    EqStr(matched.symbol, "ADA-USD_otc", "matched the real broker symbol")
+
+    _c3 := symbols.Resolve("ADA_USD_OTC", crypto, status, matched, twin)
+    EqStr(status, "corrected", "underscores in place of the dash resolve too")
+    EqStr(matched.symbol, "ADA-USD_otc", "matched the real broker symbol")
+
     mut ranked := symbols.Suggest("EUR", assets)
     defer ranked.free()
     EqInt(ranked.len(), 2, "two suggestions")

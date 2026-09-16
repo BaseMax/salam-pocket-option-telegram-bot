@@ -62,6 +62,35 @@ func SortRanked(list: Vector<Asset>):
     end
 end
 
+// Upper-cased with every separator dropped rather than turned into a
+// boundary. Normalize already throws away punctuation like the dash in
+// "ADA-USD", so an exact Find against the broker's own "ADA-USD_otc" can
+// never hit; comparing both sides on this key lets that dash cancel out.
+func CompactKey(symbol: str): str:
+    up := str.Upper(symbol)
+    mut out := ""
+    mut i := 0
+    while i < up.len():
+        c := up.substr(i, 1)
+        if !IsSeparator(c): out = out + c end
+        i = i + 1
+    end
+    ret out
+end
+
+// The asset whose symbol matches once punctuation on both sides is ignored.
+func FindCompact(assets: Vector<Asset>, symbol: str): Asset:
+    want := CompactKey(symbol)
+    if want.len() == 0: ret Asset {} end
+    mut i := 0
+    while i < assets.len():
+        a := assets.get(i)
+        if CompactKey(a.symbol) == want: ret a end
+        i = i + 1
+    end
+    ret Asset {}
+end
+
 pub func IsOtc(symbol: str): bool:
     up := str.Upper(symbol)
     if up.len() < 4: ret false end
@@ -164,6 +193,14 @@ pub func Resolve(raw: str, assets: Vector<Asset>, status &: str, matched &: Asse
             ret name
         end
         i = i + 1
+    end
+
+    compact := FindCompact(assets, name)
+    if compact.symbol.len() > 0:
+        status = "corrected"
+        matched = compact
+        twin = Find(assets, Twin(compact.symbol))
+        ret name
     end
     ret name
 end
