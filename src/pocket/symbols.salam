@@ -74,6 +74,12 @@ func FindCompact(assets: Vector<Asset>, symbol: str): Asset:
         if CompactKey(a.symbol) == want: ret a end
         i = i + 1
     end
+    i = 0
+    while i < assets.len():
+        a := assets.get(i)
+        if CompactKey(a.name) == want: ret a end
+        i = i + 1
+    end
     ret Asset {}
 end
 

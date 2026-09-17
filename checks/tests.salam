@@ -146,6 +146,18 @@ func TestSymbols():
     EqStr(status, "corrected", "a digit-led ticker still resolves")
     EqStr(matched.symbol, "1INCH-USD_otc", "matched the real broker symbol")
 
+    // "Cardano" is the asset's display name, not part of its "ADA-USD"
+    // ticker, so no amount of punctuation-stripping on the symbol side
+    // ever reaches it. The trader typed the name the /symbols hint showed
+    // them, so Resolve has to check names too, not just symbols.
+    _c7 := symbols.Resolve("CARDANO_OTC", crypto, status, matched, twin)
+    EqStr(status, "corrected", "the coin's name resolves, not just its ticker")
+    EqStr(matched.symbol, "ADA-USD_otc", "matched by the asset's display name")
+
+    _c8 := symbols.Resolve("bitcoin", crypto, status, matched, twin)
+    EqStr(status, "corrected", "a lowercase, otc-less name resolves too")
+    EqStr(matched.symbol, "BTC-USD", "matched by name again")
+
     mut ranked := symbols.Suggest("EUR", assets)
     defer ranked.free()
     EqInt(ranked.len(), 2, "two suggestions")
