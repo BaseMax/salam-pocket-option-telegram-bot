@@ -38,6 +38,7 @@ pub struct Draft:
     pub block_last_seconds: i64 = 0
     pub gap_confirm: str = ""
     pub gap_cancel: str = ""
+    pub change_price: f64 = 0.0
 
     pub awaiting: str = ""
     pub menu: str = ""
@@ -62,6 +63,7 @@ func PromptTitle(field: str): str:
     if field == "candles": ret "تعداد کندل را تایپ کنید و بفرستید." end
     if field == "payout": ret "حداقل نرخ پرداخت را به درصد تایپ کنید و بفرستید." end
     if field == "tail": ret "ثانیه‌های پایانی کندل را تایپ کنید و بفرستید." end
+    if field == "change": ret "عدد تغییر را تایپ کنید و بفرستید." end
     ret "مدت اعتبار سفارش را تایپ کنید و بفرستید."
 end
 
@@ -93,6 +95,11 @@ func PromptMessage(field: str): str:
             "نمونه: <code>90</code> · <code>۸۵</code> · <code>92%</code>\n" +
             "برای برداشتن این شرط، بفرستید <code>0</code>."
     end
+    if field == "change":
+        ret "⌨️ <b>عدد تغییر را تایپ کنید</b>\n\nقیمت دومی کنار قیمت هدف. ربات کندلی را که این قیمت را لمس می‌کند پیدا می‌کند: برای فروش «لو» و برای خرید «های» آن کندل (خودکار).\n" +
+            "تا پیش از رسیدن قیمت به هدف اصلی، اگر آن لو/های لمس شود، جهت معامله برعکس می‌شود.\n" +
+            "نمونه: <code>1.39874</code>\nبرای خاموش کردن، بفرستید <code>0</code>."
+    end
     if field == "tail":
         ret "⌨️ <b>ثانیه‌های پایانی کندل را تایپ کنید</b>\n\nدر انقضای شناور، معامله تا پایان کندل باز می‌ماند؛ پس اگر قیمت مثلاً ۳ ثانیه به پایان کندل به هدف برسد، معاملهٔ شما عملاً ۳ ثانیه‌ای است.\n" +
             "با این عدد، آن چند ثانیهٔ پایانی بسته می‌شود: اگر برخورد در آن بازه رخ دهد معامله زده نمی‌شود و فقط خبرش را می‌دهیم.\n" +
@@ -111,6 +118,7 @@ func PromptPlaceholder(field: str): str:
     if field == "candles": ret "مثلاً 1" end
     if field == "payout": ret "درصد، مثلاً 90 · 0 یعنی بدون شرط" end
     if field == "tail": ret "ثانیه، مثلاً 5 · 0 یعنی خاموش" end
+    if field == "change": ret "مثلاً 1.39874 · 0 یعنی خاموش" end
     ret "مثلاً 30m یا 2 ساعت · 0 یعنی بی‌نهایت"
 end
 
@@ -121,13 +129,14 @@ func PromptToast(field: str): str:
     if field == "duration": ret "⌨️ مدت معامله را همین‌جا تایپ کنید. مثلاً 1m یا 90 یا 2 دقیقه" end
     if field == "candles": ret "⌨️ تعداد کندل را همین‌جا تایپ کنید. مثلاً 1" end
     if field == "payout": ret "⌨️ حداقل نرخ پرداخت را به درصد تایپ کنید. مثلاً 90 · 0 یعنی بدون شرط" end
+    if field == "change": ret "⌨️ عدد تغییر را همین‌جا تایپ کنید. مثلاً 1.39874 · 0 یعنی خاموش" end
     if field == "tail": ret "⌨️ چند ثانیهٔ پایانی کندل بسته باشد؟ مثلاً 5 · 0 یعنی خاموش" end
     ret "⌨️ مدت اعتبار را همین‌جا تایپ کنید. مثلاً 30m · 0 یعنی بی‌نهایت"
 end
 
 func IsPromptField(action: str): bool:
     ret action == "symbol" or action == "price" or action == "amount" or action == "duration"  or 
-        action == "candles" or action == "valid" or action == "payout" or action == "tail"
+        action == "candles" or action == "valid" or action == "payout" or action == "tail" or action == "change"
 end
 
 func SymbolText(d: Draft): str:
@@ -166,7 +175,8 @@ func RenderPanel(d: Draft, final: bool): str:
     end
     mut gap := texts.GapSummary(d.gap_confirm, d.gap_cancel)
     if gap.len() == 0: gap = "بدون شرط" end
-    out = out + "گپ کندلی: <b>" + gap + "</b>"
+    out = out + "گپ کندلی: <b>" + gap + "</b>\n"
+    out = out + "عدد تغییر: <b>" + texts.ChangeLabel(d.change_price) + "</b>"
     if final: ret out end
 
     if d.menu == "chart":
@@ -333,6 +343,11 @@ func MainKeyboard(d: Draft): str:
     end
     tgapi.Row(k)
 
+    mut change := "خاموش"
+    if d.change_price > 0.0: change = timex.FormatPrice(d.change_price) end
+    tgapi.Button(k, "✍️ عدد تغییر: " + change, "w:change")
+    tgapi.Row(k)
+
     mut info := "❓ راهنما"
     if d.info: info = "✖️ بستن راهنما" end
     tgapi.Button(k, info, "w:info")
@@ -439,6 +454,19 @@ func ApplyInput(d &: Draft, field: str, raw: str): str:
         ret ""
     end
 
+    if field == "change":
+        trimmed_change := str.ToEnglishDigits(str.Trim(raw))
+        if trimmed_change == "0":
+            d.change_price = 0.0
+            ret ""
+        end
+        number := parse.ParseNumber(raw)
+        if not parse.IsNumber(number) or number <= 0.0:
+            ret "عدد تغییر نامعتبر است. یک قیمت بفرستید، مثلاً <code>1.39874</code>؛ برای خاموش کردن <code>0</code>."
+        end
+        d.change_price = number
+        ret ""
+    end
     if field == "tail":
         trimmed_tail := str.ToEnglishDigits(str.Trim(raw))
         if trimmed_tail == "0":
@@ -696,5 +724,6 @@ pub func Spec(chat_id: i64): types.OrderSpec:
     spec.block_last_seconds = d.block_last_seconds
     spec.gap_confirm = d.gap_confirm
     spec.gap_cancel = d.gap_cancel
+    spec.change_price = d.change_price
     ret spec
 end

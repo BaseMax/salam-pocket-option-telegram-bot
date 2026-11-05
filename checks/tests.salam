@@ -334,6 +334,86 @@ func TestCandleTracking():
     Falsy(broker.CloseIsKnown(900.0, 1200.0, 60 as i64, true, false), "the timeframe has to be the one being drawn")
 end
 
+func ChangeTick(o: types.Order, prior: f64, price: f64, at: f64, low: f64, high: f64): types.Order:
+    mut s := broker.Session {}
+    s.has_price = true
+    s.prior_price = prior
+    s.price = price
+    s.has_candle = true
+    s.timeframe = 60 as i64
+    s.candle_open_time = timex.CandleOpenTime(at, 60 as i64)
+    s.candle_low = low
+    s.candle_high = high
+    ret engine.TrackChange(o, s, price, at)
+end
+
+func TestChangeNumber():
+    Truthy(store.Open(":memory:"), "a database for the change number")
+
+    mut spec := types.OrderSpec {}
+    EqStr(parse.ParseOrder("EURUSD sell 1.39925 change=1.39874", spec), "", "change= parses")
+    EqFloat(spec.change_price, 1.39874, "the change number is kept")
+    EqStr(parse.ParseOrder("EURUSD sell 1.39925 change=off", spec), "", "change=off parses")
+    EqFloat(spec.change_price, 0.0, "off takes it back")
+    Truthy(parse.ParseOrder("EURUSD sell 1.39925 change=abc", spec).len() > 0, "a word is not a price")
+
+    Truthy(engine.ExtremeTaken(types.PUT, 1.39859, 1.39859), "a put's low is taken when touched")
+    Truthy(engine.ExtremeTaken(types.PUT, 1.39859, 1.3985), "or broken")
+    Falsy(engine.ExtremeTaken(types.PUT, 1.39859, 1.3987), "above the low it is not")
+    Truthy(engine.ExtremeTaken(types.CALL, 1.4, 1.4001), "a call's high is taken from below it")
+    Falsy(engine.ExtremeTaken(types.CALL, 1.4, 1.3999), "under the high it is not")
+    EqStr(types.Opposite(types.PUT), types.CALL, "put reverses to call")
+    EqStr(types.Opposite(types.CALL), types.PUT, "call reverses to put")
+
+    mut o := types.Order {}
+    o.chat_id = 1 as i64
+    o.symbol = "USDCAD_otc"
+    o.direction = types.PUT
+    o.trigger_price = 1.39925
+    o.timeframe_seconds = 60 as i64
+    o.change_price = 1.39874
+    o = store.Create(o)
+    _drained := engine.TakeEvent()
+
+    o = ChangeTick(o, 1.3989, 1.3988, 1205.0, 1.3988, 1.3989)
+    Falsy(o.change_touched, "not touched yet")
+
+    o = ChangeTick(o, 1.3988, 1.39874, 1210.0, 1.39874, 1.3989)
+    Truthy(o.change_touched, "the price reaches the change number")
+    EqFloat(o.change_extreme, 1.39874, "its candle's low so far")
+
+    o = ChangeTick(o, 1.39874, 1.39859, 1230.0, 1.39859, 1.3989)
+    EqFloat(o.change_extreme, 1.39859, "the same candle keeps lowering it")
+    EqStr(o.direction, types.PUT, "taking the low inside its own candle is not a flip")
+    Falsy(o.change_locked, "and it is not final yet")
+    EqStr(engine.TakeEvent().kind, "", "nothing announced yet")
+
+    o = ChangeTick(o, 1.39859, 1.3989, 1262.0, 1.3989, 1.3989)
+    Truthy(o.change_locked, "the next candle makes it final")
+    e := engine.TakeEvent()
+    EqStr(e.kind, engine.EV_CHANGE_FOUND, "and says so")
+    EqFloat(e.price, 1.39859, "with the low in it")
+    EqStr(o.direction, types.PUT, "still a put")
+
+    o = ChangeTick(o, 1.3989, 1.3987, 1270.0, 1.3987, 1.3989)
+    EqStr(o.direction, types.PUT, "above the low nothing happens")
+    EqStr(engine.TakeEvent().kind, "", "no second announcement")
+
+    o = ChangeTick(o, 1.3987, 1.39859, 1280.0, 1.39859, 1.3989)
+    EqStr(o.direction, types.CALL, "the low is touched before the trigger: reversed")
+    Truthy(o.change_flipped, "and remembered")
+    EqStr(engine.TakeEvent().kind, engine.EV_FLIPPED, "the owner is told")
+
+    back := store.Get(o.id)
+    EqStr(back.direction, types.CALL, "the reversal is stored")
+    EqFloat(back.change_extreme, 1.39859, "with its extreme")
+    Truthy(back.change_flipped and back.change_locked, "and both flags")
+
+    o = ChangeTick(o, 1.39859, 1.3980, 1290.0, 1.3980, 1.3989)
+    EqStr(o.direction, types.CALL, "it only flips once")
+    store.Close()
+end
+
 func TestExpiry():
     fixed := types.Order { expiry_mode = types.EXPIRY_FIXED, duration_seconds = 90 as i64 }
     mut close_at := 0.0
@@ -768,6 +848,7 @@ func main:
     TestCandleTail()
     TestCandleGap()
     TestCandleTracking()
+    TestChangeNumber()
     TestExpiry()
     TestJson()
     TestSsid()

@@ -150,6 +150,7 @@ Telegram take precedence and persist in the database.
 /order EURUSD sell 1.08540 tf=1m exp=float candles=1 entry=next
 /order EURUSD_otc buy 1.08540 payout=90 tail=5
 /order EURUSD buy 1.08540 exp=float gapcancel=کمتر,برابر gapconfirm=بیشتر
+/order USDCAD_otc sell 1.39925 change=1.39874
 ```
 
 | Key | Values | Default |
@@ -167,6 +168,7 @@ Telegram take precedence and persist in the database.
 | `tail` | `5`, seconds at the end of a candle where a floating trade is refused | `/set tail` |
 | `gapconfirm` | `برابر`/`بیشتر`/`کمتر` (`equal`/`above`/`below`), comma separated; the gap must be one of them | `/set gapconfirm` |
 | `gapcancel` | the same three; a gap that is one of them calls the trade off | `/set gapcancel` |
+| `change` | a second price, "عدد تغییر"; `off` or `0` takes it back | off |
 
 Every value is read leniently. Durations accept any unit spelling in either language and any
 case: `90`, `1m`, `1M`, `2 minutes`, `۳۰ دقیقه`, `1h 30m`, `2 ساعت و ۱۵ دقیقه`, `3 days`, `1 ماه`
@@ -247,6 +249,18 @@ pending ──price touches trigger──┬─ touch mode ───────
 
 `pending` also ends in `cancelled` (by you) or `expired` (validity elapsed); any step can end in
 `failed` if the broker refuses the trade.
+
+### The change number (عدد تغییر)
+
+An optional second price beside the trigger price, for orders that should reverse when the market
+does not behave. While the order waits, the bot watches for the candle that touches the change
+number and keeps that candle's **low for a sell, high for a buy** (chosen from the direction, not
+by the user). When the candle ends the extreme is final and the bot announces it in a message.
+From then on, if the price takes that extreme out **before it reaches the trigger price**, the
+order's direction is reversed once and the trade is entered at the trigger price the other way.
+Once the trigger is reached the change number is no longer looked at. The extreme includes the
+ticks of the touch candle the session saw before the touch, but a candle that opened before the
+order was created is only known from the moment the bot started watching it.
 
 ### Conditions read at the trade, not at the order
 

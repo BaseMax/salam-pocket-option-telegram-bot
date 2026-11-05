@@ -247,6 +247,15 @@ pub func ParseOrder(args: str, spec &: types.OrderSpec): str:
             if percent < 0: ret "حداقل نرخ پرداخت نامعتبر (عددی بین ۰ تا ۱۰۰): " + value end
             spec.min_payout = percent
 
+        else key == "change" or key == "chg" or key == "تغییر":
+            if OnOff(value) == "off" or value == "0":
+                spec.change_price = 0.0
+            else:
+                number := ParseNumber(value)
+                if not IsNumber(number) or number <= 0.0: ret "عدد تغییر نامعتبر (یک قیمت، یا off برای برداشتن): " + value end
+                spec.change_price = number
+            end
+
         else key == "tail" or key == "candletail" or key == "lastsec":
             seconds := timex.ParseDuration(value)
             if seconds == timex.INVALID or seconds < 0: ret "ثانیه‌های پایانی کندل نامعتبر: " + value end

@@ -126,6 +126,16 @@ pub func GapSummary(confirm: str, cancel: str): str:
     ret out
 end
 
+pub func ChangeExtremeName(direction: str): str:
+    if direction == types.PUT: ret "لو (کف)" end
+    ret "های (سقف)"
+end
+
+pub func ChangeLabel(change_price: f64): str:
+    if change_price <= 0.0: ret "خاموش" end
+    ret timex.FormatPrice(change_price)
+end
+
 pub func TailLabel(seconds: i64): str:
     if seconds <= 0: ret "بدون شرط" end
     ret str.FromInt(seconds) + " ثانیهٔ پایانی کندل"
@@ -160,6 +170,14 @@ pub func RenderOrder(o: types.Order, offset_minutes: i64, compact: bool): str:
     gap := GapSummary(o.gap_confirm, o.gap_cancel)
     if gap.len() > 0:
         out = out + "\nگپ کندلی — " + gap
+    end
+    if o.change_price > 0.0:
+        out = out + "\nعدد تغییر: <code>" + timex.FormatPrice(o.change_price) + "</code>"
+        if o.change_flipped:
+            out = out + " · 🔄 جهت برعکس شد"
+        else o.change_touched:
+            out = out + " · " + ChangeExtremeName(o.direction) + " کندل: <code>" + timex.FormatPrice(o.change_extreme) + "</code>"
+        end
     end
 
     if not compact:
@@ -259,6 +277,7 @@ pub func TradeGuide(): str:
         "• <b>کنسل</b> — اگر گپ یکی از حالت‌های انتخابی بود، معامله زده نشود.\n" +
         "هر کدام را می‌توانید خالی بگذارید، یک حالت یا چند حالت انتخاب کنید. اگر حالتی هم در تایید و هم در کنسل باشد، کنسل مقدم است. این مقایسه دقیقاً در لحظهٔ ورود انجام می‌شود.\n\n" +
         "<b>ورود در ثانیه‌های پایانی کندل</b> — در انقضای شناور، معامله‌ای که مثلاً ۳ ثانیه به پایان کندل باز شود عملاً معاملهٔ ۳ ثانیه‌ای است. با این گزینه چند ثانیهٔ پایانی کندل بسته می‌شود و اگر قیمت در آن بازه به هدف برسد، معامله زده نمی‌شود. پیش‌فرض ۵ ثانیه؛ <code>0</code> یعنی خاموش.\n\n" +
+        "<b>عدد تغییر</b> — گزینهٔ اختیاری. یک قیمت دوم کنار قیمت هدف می‌دهید. ربات کندلی را که این عدد را لمس می‌کند پیدا می‌کند و برای <b>فروش</b> «لو» و برای <b>خرید</b> «های» همان کندل را نگه می‌دارد (انتخاب خودکار است) و عدد آن را در یک پیام اعلام می‌کند. تا وقتی قیمت به هدف اصلی نرسیده، اگر این لو/های لمس شود، <b>جهت معامله برعکس می‌شود</b> و در قیمت هدف با جهت تازه وارد می‌شود. <code>off</code> یا <code>0</code> یعنی خاموش.\n\n" +
         "<b>حداقل نرخ پرداخت</b> — درصدی که کارگزار جلوی هر نماد می‌نویسد و مدام تغییر می‌کند. اگر برای سفارش عددی بگذارید، ربات دقیقاً در همان لحظه‌ای که قیمت به هدف می‌رسد نرخ را می‌خواند: اگر برابر یا بیشتر از عدد شما بود معامله را می‌زند، وگرنه نمی‌زند و فقط خبر می‌دهد که قیمت رسید ولی شرط برقرار نبود. <code>0</code> یعنی این شرط را نگذار.\n\n" +
         "<b>حساب</b> — دمو با پول مجازی، ریل با پول واقعی. حساب پیش‌فرض را با /mode عوض کنید."
 end
@@ -293,7 +312,8 @@ pub func Help(): str:
         "<code>amount</code> مبلغ · <code>acc</code> حساب · <code>valid</code> اعتبار سفارش\n" +
         "<code>payout</code> حداقل نرخ پرداخت به درصد؛ اگر لحظهٔ ورود کمتر از آن بود، معامله زده نمی‌شود\n" +
         "<code>tail</code> ثانیه‌های پایانی کندل که در آن‌ها معاملهٔ شناور زده نشود (مثلاً <code>tail=5</code>)\n" +
-        "<code>gapconfirm</code> و <code>gapcancel</code> گپ کندلی: <code>برابر</code> · <code>بیشتر</code> · <code>کمتر</code>\n\n" +
+        "<code>gapconfirm</code> و <code>gapcancel</code> گپ کندلی: <code>برابر</code> · <code>بیشتر</code> · <code>کمتر</code>\n" +
+        "<code>change</code> عدد تغییر: اگر لو (فروش) یا های (خرید) کندلی که این قیمت را لمس کرد پیش از رسیدن به هدف لمس شود، جهت برعکس می‌شود (مثلاً <code>change=1.39874</code>)\n\n" +
         "مقدارهای زمانی را آزادانه بنویسید: <code>dur=90</code> · <code>dur=1m</code> · <code>valid=2h</code>\n" +
         "برای راهنمای کامل /start را بزنید."
 end

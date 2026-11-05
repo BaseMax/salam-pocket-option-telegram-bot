@@ -53,6 +53,7 @@ pub struct OrderSpec:
     pub block_last_seconds: i64 = 0
     pub gap_confirm: str = ""
     pub gap_cancel: str = ""
+    pub change_price: f64 = 0.0
 end
 
 pub struct Order:
@@ -79,6 +80,13 @@ pub struct Order:
     pub block_last_seconds: i64 = 0
     pub gap_confirm: str = ""
     pub gap_cancel: str = ""
+
+    pub change_price: f64 = 0.0
+    pub change_touched: bool = false
+    pub change_candle: f64 = 0.0
+    pub change_extreme: f64 = 0.0
+    pub change_flipped: bool = false
+    pub change_locked: bool = false
 
     pub status: str = ST_PENDING
     pub reference_price: f64 = 0.0
@@ -136,6 +144,11 @@ pub func GapListToggle(list: str, relation: str): str:
     if relation == GAP_ABOVE: above = not above end
     if relation == GAP_BELOW: below = not below end
     ret GapListMake(equal, above, below)
+end
+
+pub func Opposite(direction: str): str:
+    if direction == CALL: ret PUT end
+    ret CALL
 end
 
 pub func IsActive(status: str): bool:

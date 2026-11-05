@@ -17,6 +17,8 @@ pub const EV_FAILED := "failed"
 pub const EV_EXPIRED := "expired"
 pub const EV_MISSED := "missed"
 pub const EV_SKIPPED := "skipped"
+pub const EV_FLIPPED := "flipped"
+pub const EV_CHANGE_FOUND := "change_found"
 pub const EV_SETTLE_LATE := "settlement_pending"
 pub const EV_AUTH_FAILED := "auth_failed"
 
@@ -310,7 +312,7 @@ end
 
 func StepOrder(index: int):
     a := _attachments.get(index)
-    o := store.Get(a.order_id)
+    mut o := store.Get(a.order_id)
     if o.id.len() == 0:
         Detach(a.order_id)
         ret
@@ -330,6 +332,7 @@ func StepOrder(index: int):
             store.Save(seeded)
             ret
         end
+        o = TrackChange(o, session, price, tick_time)
         if IsTouched(o, session.prior_price, session.has_price, price):
             if session.tick_follows_gap:
                 Finish(o, types.ST_EXPIRED, "the price crossed the trigger while the price stream was down",
@@ -388,6 +391,57 @@ func CheckAuth():
     end
 end
 
+func FoldCandleExtreme(o: types.Order, s: broker.Session, bucket: f64, price: f64): types.Order:
+    mut out := o
+    mut low := price
+    mut high := price
+    if s.has_candle and s.candle_open_time == bucket and s.timeframe == o.timeframe_seconds:
+        low = s.candle_low
+        high = s.candle_high
+    end
+    if o.direction == types.PUT:
+        if not o.change_touched or low < o.change_extreme: out.change_extreme = low end
+    else:
+        if not o.change_touched or high > o.change_extreme: out.change_extreme = high end
+    end
+    ret out
+end
+
+pub func TrackChange(o: types.Order, s: broker.Session, price: f64, tick_time: f64): types.Order:
+    if o.change_price <= 0.0 or o.change_flipped: ret o end
+    bucket := timex.CandleOpenTime(tick_time, o.timeframe_seconds)
+    mut next := o
+
+    if not o.change_touched:
+        if not IsTouchedAt(o.change_price, s.prior_price, s.has_price, price): ret o end
+        next.change_touched = true
+        next.change_candle = bucket
+        next.change_extreme = price
+        next = FoldCandleExtreme(next, s, bucket, price)
+        store.Save(next)
+        ret next
+    end
+
+    if bucket == o.change_candle:
+        next = FoldCandleExtreme(next, s, bucket, price)
+        if next.change_extreme != o.change_extreme: store.Save(next) end
+        ret next
+    end
+    if bucket < o.change_candle: ret o end
+
+    if not o.change_locked:
+        next.change_locked = true
+        store.Save(next)
+        Publish(EV_CHANGE_FOUND, next, o.change_extreme, 0.0, "")
+    end
+    if not ExtremeTaken(o.direction, o.change_extreme, price): ret next end
+    next.direction = types.Opposite(o.direction)
+    next.change_flipped = true
+    store.Save(next)
+    Publish(EV_FLIPPED, next, price, 0.0, "")
+    ret next
+end
+
 pub func Payout(mode: str, symbol: str, has_payout &: bool): i64:
     a := symbols.Find(broker.Assets(mode), symbol)
     has_payout = a.symbol.len() > 0 and a.has_payout
@@ -424,6 +478,17 @@ pub func ResolveApproachSide(trigger_price: f64, reference_price: f64, has_refer
     if reference_price < trigger_price: ret types.SIDE_BELOW end
     if reference_price > trigger_price: ret types.SIDE_ABOVE end
     ret types.SIDE_ANY
+end
+
+pub func ExtremeTaken(direction: str, extreme: f64, price: f64): bool:
+    if direction == types.PUT: ret price <= extreme end
+    ret price >= extreme
+end
+
+pub func IsTouchedAt(level: f64, prior_price: f64, has_prior: bool, price: f64): bool:
+    if price == level: ret true end
+    if not has_prior: ret false end
+    ret Crossed(prior_price, price, level)
 end
 
 pub func Crossed(previous: f64, current: f64, target: f64): bool:

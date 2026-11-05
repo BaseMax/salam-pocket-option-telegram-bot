@@ -273,6 +273,7 @@ func SubmitOrder(chat_id: i64, spec: types.OrderSpec):
     o.block_last_seconds = spec.block_last_seconds
     o.gap_confirm = spec.gap_confirm
     o.gap_cancel = spec.gap_cancel
+    o.change_price = spec.change_price
     if spec.valid_for_seconds > 0:
         o.valid_until = timex.NowSeconds() + (spec.valid_for_seconds as f64)
     end
@@ -940,6 +941,20 @@ pub func EventText(e: engine.Event): str:
         ret "🚫 <b>قیمت به هدف رسید، ولی معامله زده نشد</b>\n\n" + head + "\nقیمت برخورد: <code>" +
             timex.FormatPrice(e.price) + "</code>\n" + texts.EscapeHtml(e.detail) +
             "\n\nاین سفارش بسته شد. اگر می‌خواهید دوباره منتظر همین قیمت بماند، سفارش تازه‌ای ثبت کنید."
+    end
+    if e.kind == engine.EV_CHANGE_FOUND:
+        ret "📍 <b>" + texts.ChangeExtremeName(o.direction) + " کندل عدد تغییر مشخص شد</b>\n\n" + head +
+            "\nعدد تغییر <code>" + timex.FormatPrice(o.change_price) + "</code> لمس شد و " +
+            texts.ChangeExtremeName(o.direction) + " همان کندل: <code>" + timex.FormatPrice(e.price) +
+            "</code>\nتا پیش از رسیدن قیمت به هدف <code>" + timex.FormatPrice(o.trigger_price) +
+            "</code> نباید این عدد لمس شود؛ اگر لمس شد جهت معامله برعکس می‌شود."
+    end
+    if e.kind == engine.EV_FLIPPED:
+        ret "🔄 <b>جهت معامله برعکس شد</b>\n\n" + head + "\nقیمت به " + texts.ChangeExtremeName(o.direction) +
+            " کندلی که عدد تغییر <code>" + timex.FormatPrice(o.change_price) + "</code> را لمس کرد (<code>" +
+            timex.FormatPrice(o.change_extreme) + "</code>) رسید، پیش از آنکه به هدف <code>" +
+            timex.FormatPrice(o.trigger_price) + "</code> برسد.\nمعامله با قیمت هدف، در جهت تازه ثبت می‌شود: " +
+            texts.DirectionLong(o.direction) + "."
     end
     if e.kind == engine.EV_SETTLE_LATE:
         ret "⏱ <b>نتیجهٔ معامله هنوز نرسیده</b>\n\n" + head +

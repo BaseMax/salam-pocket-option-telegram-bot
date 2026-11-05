@@ -100,6 +100,8 @@ pub struct Session:
 
     pub candle_open_time: f64 = 0.0
     pub candle_open_price: f64 = 0.0
+    pub candle_high: f64 = 0.0
+    pub candle_low: f64 = 0.0
     pub has_candle: bool = false
     pub previous_close: f64 = 0.0
     pub has_previous_close: bool = false
@@ -172,15 +174,24 @@ func TrackCandle(s &: Session, tick_time: f64, price: f64, follows_gap: bool):
     if not s.has_candle:
         s.candle_open_time = bucket
         s.candle_open_price = price
+        s.candle_high = price
+        s.candle_low = price
         s.has_candle = true
         ret
     end
-    if bucket <= s.candle_open_time: ret end
+    if bucket < s.candle_open_time: ret end
+    if bucket == s.candle_open_time:
+        if price > s.candle_high: s.candle_high = price end
+        if price < s.candle_low: s.candle_low = price end
+        ret
+    end
 
     s.has_previous_close = CloseIsKnown(s.candle_open_time, bucket, s.timeframe, s.has_price, follows_gap)
     s.previous_close = s.price
     s.candle_open_time = bucket
     s.candle_open_price = price
+    s.candle_high = price
+    s.candle_low = price
 end
 
 func ResetCandles(s &: Session):
@@ -188,6 +199,8 @@ func ResetCandles(s &: Session):
     s.has_previous_close = false
     s.candle_open_time = 0.0
     s.candle_open_price = 0.0
+    s.candle_high = 0.0
+    s.candle_low = 0.0
     s.previous_close = 0.0
 end
 
