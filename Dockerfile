@@ -15,9 +15,9 @@ FROM debian:${DEBIAN_VERSION} AS build
 ARG SALAM_VERSION
 
 # clang links the native target; libsqlite3-dev is what std/db links against;
-# curl is what the installer downloads the compiler with.
+# curl and unzip are what the installer downloads and unpacks the compiler with.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl clang libc6-dev libsqlite3-dev \
+        ca-certificates curl unzip clang libc6-dev libsqlite3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # The installer is taken from the release tag, not from main, so the same
