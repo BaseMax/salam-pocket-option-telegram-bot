@@ -1,10 +1,7 @@
 services:
   bot:
-    # The image is built by `./build.sh image`, which stages the Salam
-    # compiler and its standard library where the Dockerfile can reach them.
-    # `docker compose build` alone cannot: the socket.io client this bot needs
-    # is newer than the last Salam release, so the image cannot fetch a
-    # compiler for itself yet.
+    # `docker compose up -d --build` builds the image: the Dockerfile installs
+    # the pinned Salam compiler itself and runs the test suite on the way in.
     build: .
     image: pocket-option-telegram-bot:latest
     container_name: pocket-option-bot

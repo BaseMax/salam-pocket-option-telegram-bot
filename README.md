@@ -301,23 +301,21 @@ and only `./data` is writable, which is where the database lives.
 ```bash
 cp .env.example .env                            # then fill in the token and the SSID
 mkdir -p data && sudo chown -R 1000:1000 data   # 1000:1000 is the image's own bot user
-SALAM=/path/to/salam ./build.sh image           # builds pocket-option-telegram-bot:latest
-docker compose up -d
+docker compose up -d --build                     # builds the image, then starts the bot
 docker compose logs -f
 ```
 
-`./build.sh image` stages the compiler and its standard library into
-`.salam-toolchain/` (gitignored, removed again afterwards) because the
-socket.io client this bot needs is newer than the last published Salam
-release. Once a release carries `std/net/socketio`, the Dockerfile can fetch
-its own compiler with the official `install.sh` and this step disappears -
-the comment at the top of the Dockerfile says where.
+The Dockerfile installs the Salam compiler itself with the official installer, pinned
+to the `SALAM_VERSION` build argument (0.6.2), and runs the test suite while building, so
+the server needs Docker and nothing else: no local compiler, no staging step.
+`./build.sh image` is the same build under a tag, for shipping an image instead of the
+source.
 
-**Deploying to a machine without a Salam compiler.** Build the image where the
-compiler is, and ship the image rather than the source:
+**Shipping a prebuilt image** to a machine that should not build (or has no network to
+reach GitHub): build it here and load it there.
 
 ```bash
-SALAM=/path/to/salam ./build.sh image
+./build.sh image
 docker save pocket-option-telegram-bot:latest | gzip | ssh user@server 'gunzip | docker load'
 ssh user@server 'cd /path/to/app && docker compose up -d'
 ```

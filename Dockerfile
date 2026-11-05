@@ -1,27 +1,32 @@
 # The bot is one native binary.
 #
-# The build stage compiles the Salam sources with a compiler staged into
-# .salam-toolchain by build.sh, because the socket.io client this bot needs
-# is newer than the last published Salam release. Once a release carries
-# std/net/socketio, this stage can fetch it with the official install.sh
-# instead and the toolchain copy can go.
+# The build stage installs the Salam compiler with the official installer,
+# pinned to a release (0.6.2 carries std/net/socketio, which this bot needs),
+# so `docker compose up -d --build` works on any machine with Docker and
+# nothing has to be staged beforehand. Change SALAM_VERSION to move to another
+# release.
 #
 # The runtime stage keeps the binary, SQLite and a CA bundle, and nothing
 # else: no compiler, no standard library, no source.
 ARG DEBIAN_VERSION=trixie-slim
+ARG SALAM_VERSION=0.6.2
 
 FROM debian:${DEBIAN_VERSION} AS build
+ARG SALAM_VERSION
 
-# clang links the native target; libsqlite3-dev is what std/db links against.
+# clang links the native target; libsqlite3-dev is what std/db links against;
+# curl is what the installer downloads the compiler with.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates clang libc6-dev libsqlite3-dev \
+        ca-certificates curl clang libc6-dev libsqlite3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Staged by `./build.sh image`: the compiler and the standard library it
-# needs. SALAM_STD is named outright because the binary-relative lookup does
-# not fire when the compiler is invoked through PATH.
-COPY .salam-toolchain/salam /opt/salam/salam
-COPY .salam-toolchain/std /opt/salam/std
+# The installer is taken from the release tag, not from main, so the same
+# version always installs the same way. SALAM_STD is named outright because the
+# binary-relative lookup does not fire when the compiler is invoked through
+# PATH.
+RUN curl -fsSL "https://raw.githubusercontent.com/SalamLang/Salam/v${SALAM_VERSION}/install.sh" \
+        | SALAM_NO_MODIFY_PATH=1 sh -s -- --dir /opt/salam --version "${SALAM_VERSION}" \
+    && /opt/salam/salam version | head -1
 ENV PATH="/opt/salam:${PATH}" \
     SALAM_STD="/opt/salam/std"
 
