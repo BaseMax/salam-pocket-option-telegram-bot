@@ -1,9 +1,9 @@
 package parse
 
 import str
-import types "../types.salam"
-import timex "../util/timex.salam"
-import symbols "../pocket/symbols.salam"
+include types "../types.salam"
+include timex "../util/timex.salam"
+include symbols "../pocket/symbols.salam"
 
 pub const NOT_A_NUMBER := 0.0 - 1000000000.0
 
@@ -28,14 +28,14 @@ pub func ParseNumber(raw: str): f64:
     mut i := 0
     mut digits := 0
     mut dots := 0
-    while i < s.len():
+    until i < s.len():
         c := s.substr(i, 1)
-        if c == "-" || c == "+":
+        if c == "-" or c == "+":
             if i != 0: ret NOT_A_NUMBER end
         else c == ".":
             dots = dots + 1
             if dots > 1: ret NOT_A_NUMBER end
-        else c >= "0" && c <= "9":
+        else c >= "0" and c <= "9":
             digits = digits + 1
         else:
             ret NOT_A_NUMBER
@@ -66,9 +66,9 @@ pub func ParseInt64(raw: str): i64:
 
     mut value := 0 as i64
     mut digits := 0
-    while i < text.len():
+    until i < text.len():
         c := text.substr(i, 1)
-        if c < "0" || c > "9": break end
+        if c < "0" or c > "9": break end
         value = value * 10 as i64 + (str.ToInt(c) as i64)
         digits = digits + 1
         i = i + 1
@@ -81,37 +81,37 @@ end
 
 pub func Direction(raw: str): str:
     w := NormalizeWord(raw)
-    if w == "buy" || w == "call" || w == "up" || w == "long" || w == "خرید" || w == "بالا" || w == "صعودی": ret types.CALL end
-    if w == "sell" || w == "put" || w == "down" || w == "short" || w == "فروش" || w == "پایین" || w == "نزولی": ret types.PUT end
+    if w == "buy" or w == "call" or w == "up" or w == "long" or w == "خرید" or w == "بالا" or w == "صعودی": ret types.CALL end
+    if w == "sell" or w == "put" or w == "down" or w == "short" or w == "فروش" or w == "پایین" or w == "نزولی": ret types.PUT end
     ret ""
 end
 
 pub func TriggerMode(raw: str): str:
     w := NormalizeWord(raw)
-    if w == "touch" || w == "now" || w == "instant" || w == "لحظهای" || w == "لحظه" || w == "برخورد": ret types.TRIGGER_TOUCH end
-    if w == "next" || w == "next_candle" || w == "candle" || w == "بعدی" || w == "کندلبعدی": ret types.TRIGGER_NEXT_CANDLE end
+    if w == "touch" or w == "now" or w == "instant" or w == "لحظهای" or w == "لحظه" or w == "برخورد": ret types.TRIGGER_TOUCH end
+    if w == "next" or w == "next_candle" or w == "candle" or w == "بعدی" or w == "کندلبعدی": ret types.TRIGGER_NEXT_CANDLE end
     ret ""
 end
 
 pub func ExpiryMode(raw: str): str:
     w := NormalizeWord(raw)
-    if w == "fixed" || w == "static" || w == "ثابت": ret types.EXPIRY_FIXED end
-    if w == "float" || w == "floating" || w == "candle" || w == "شناور": ret types.EXPIRY_FLOATING end
+    if w == "fixed" or w == "static" or w == "ثابت": ret types.EXPIRY_FIXED end
+    if w == "float" or w == "floating" or w == "candle" or w == "شناور": ret types.EXPIRY_FLOATING end
     ret ""
 end
 
 pub func ChartType(raw: str): str:
     w := NormalizeWord(raw)
-    if w == "candle" || w == "candles" || w == "ohlc" || w == "japanese" || w == "کندل" || w == "کندلی" || w == "شمعی": ret types.CHART_CANDLE end
-    if w == "ha" || w == "heikin" || w == "heikin_ashi" || w == "heikinashi" || w == "heikin-ashi" || w == "هایکن" || w == "هایکنآشی": ret types.CHART_HEIKIN_ASHI end
-    if w == "line" || w == "area" || w == "خطی": ret types.CHART_LINE end
+    if w == "candle" or w == "candles" or w == "ohlc" or w == "japanese" or w == "کندل" or w == "کندلی" or w == "شمعی": ret types.CHART_CANDLE end
+    if w == "ha" or w == "heikin" or w == "heikin_ashi" or w == "heikinashi" or w == "heikin-ashi" or w == "هایکن" or w == "هایکنآشی": ret types.CHART_HEIKIN_ASHI end
+    if w == "line" or w == "area" or w == "خطی": ret types.CHART_LINE end
     ret ""
 end
 
 pub func AccountMode(raw: str): str:
     w := NormalizeWord(raw)
-    if w == "demo" || w == "practice" || w == "دمو" || w == "آزمایشی" || w == "تمرینی": ret types.MODE_DEMO end
-    if w == "real" || w == "live" || w == "ریل" || w == "واقعی": ret types.MODE_REAL end
+    if w == "demo" or w == "practice" or w == "دمو" or w == "آزمایشی" or w == "تمرینی": ret types.MODE_DEMO end
+    if w == "real" or w == "live" or w == "ریل" or w == "واقعی": ret types.MODE_REAL end
     ret ""
 end
 
@@ -120,18 +120,18 @@ pub func Percent(raw: str): i64:
     text = str.Replace(text, "%", "")
     text = str.Replace(text, "٪", "")
     value := ParseNumber(text)
-    if !IsNumber(value) || value < 0.0 || value > 100.0: ret 0 as i64 - 1 as i64 end
+    if not IsNumber(value) or value < 0.0 or value > 100.0: ret 0 as i64 - 1 as i64 end
     ret (value + 0.5) as i64
 end
 
 pub func GapWord(raw: str): str:
     w := NormalizeWord(raw)
-    if w == "above" || w == "up" || w == "higher" || w == "greater" || w == "gt" || w == ">" ||
-        w == "بیشتر" || w == "بالاتر" || w == "بالا" || w == "صعودی": ret types.GAP_ABOVE end
-    if w == "below" || w == "down" || w == "lower" || w == "less" || w == "lt" || w == "<" ||
-        w == "کمتر" || w == "پایینتر" || w == "پایین" || w == "نزولی": ret types.GAP_BELOW end
-    if w == "equal" || w == "same" || w == "eq" || w == "=" || w == "==" ||
-        w == "برابر" || w == "مساوی" || w == "یکسان": ret types.GAP_EQUAL end
+    if w == "above" or w == "up" or w == "higher" or w == "greater" or w == "gt" or w == ">"  or 
+        w == "بیشتر" or w == "بالاتر" or w == "بالا" or w == "صعودی": ret types.GAP_ABOVE end
+    if w == "below" or w == "down" or w == "lower" or w == "less" or w == "lt" or w == "<"  or 
+        w == "کمتر" or w == "پایینتر" or w == "پایین" or w == "نزولی": ret types.GAP_BELOW end
+    if w == "equal" or w == "same" or w == "eq" or w == "=" or w == "=="  or 
+        w == "برابر" or w == "مساوی" or w == "یکسان": ret types.GAP_EQUAL end
     ret ""
 end
 
@@ -139,8 +139,8 @@ pub func GapList(raw: str, list &: str): bool:
     list = ""
     text := str.Trim(raw)
     w := NormalizeWord(text)
-    if text.len() == 0 || w == "none" || w == "off" || w == "0" || w == "no" ||
-        w == "هیچ" || w == "خاموش" || w == "ندارد": ret true end
+    if text.len() == 0 or w == "none" or w == "off" or w == "0" or w == "no"  or 
+        w == "هیچ" or w == "خاموش" or w == "ندارد": ret true end
 
     mut parts := text.split(",")
     defer parts.free()
@@ -148,7 +148,7 @@ pub func GapList(raw: str, list &: str): bool:
     mut above := false
     mut below := false
     mut i := 0
-    while i < parts.len():
+    until i < parts.len():
         piece := str.Trim(parts.get(i))
         if piece.len() > 0:
             relation := GapWord(piece)
@@ -165,8 +165,8 @@ end
 
 pub func OnOff(raw: str): str:
     w := NormalizeWord(raw)
-    if w == "on" || w == "true" || w == "1" || w == "yes" || w == "روشن" || w == "بله": ret "on" end
-    if w == "off" || w == "false" || w == "0" || w == "no" || w == "خاموش" || w == "نه": ret "off" end
+    if w == "on" or w == "true" or w == "1" or w == "yes" or w == "روشن" or w == "بله": ret "on" end
+    if w == "off" or w == "false" or w == "0" or w == "no" or w == "خاموش" or w == "نه": ret "off" end
     ret ""
 end
 
@@ -184,55 +184,55 @@ pub func ParseOrder(args: str, spec &: types.OrderSpec): str:
     if direction.len() == 0: ret "جهت معامله نامعتبر است: " + words.get(1) end
 
     price := ParseNumber(words.get(2))
-    if !IsNumber(price) || price <= 0.0: ret "قیمت نامعتبر است: " + words.get(2) end
+    if not IsNumber(price) or price <= 0.0: ret "قیمت نامعتبر است: " + words.get(2) end
 
     spec.symbol = symbol
     spec.direction = direction
     spec.trigger_price = price
 
     mut i := 3
-    while i < words.len():
+    until i < words.len():
         token := words.get(i)
         i = i + 1
 
-        eq := str.IndexOf(token, "=")
-        if eq < 0: ret "پارامتر نامعتبر: " + token + " (باید به شکل key=value باشد)" end
-        key := NormalizeWord(token.substr(0, eq))
-        value := token.substr(eq + 1, token.len() - eq - 1)
+        eqpos := str.IndexOf(token, "=")
+        if eqpos < 0: ret "پارامتر نامعتبر: " + token + " (باید به شکل key=value باشد)" end
+        key := NormalizeWord(token.substr(0, eqpos))
+        value := token.substr(eqpos + 1, token.len() - eqpos - 1)
 
-        if key == "tf" || key == "timeframe":
+        if key == "tf" or key == "timeframe":
             seconds := timex.ParseDuration(value)
             if seconds == timex.INVALID: ret "تایم‌فریم نامعتبر: " + value end
             spec.timeframe_seconds = seconds
 
-        else key == "dur" || key == "duration" || key == "time":
+        else key == "dur" or key == "duration" or key == "time":
             seconds := timex.ParseDuration(value)
             if seconds == timex.INVALID: ret "مدت معامله نامعتبر: " + value end
             spec.duration_seconds = seconds
             spec.expiry_mode = types.EXPIRY_FIXED
 
-        else key == "candles" || key == "candle":
+        else key == "candles" or key == "candle":
             count := ParseNumber(value)
-            if !IsNumber(count) || count < 1.0: ret "تعداد کندل نامعتبر: " + value end
+            if not IsNumber(count) or count < 1.0: ret "تعداد کندل نامعتبر: " + value end
             spec.candle_count = (count + 0.5) as i64
             spec.expiry_mode = types.EXPIRY_FLOATING
 
-        else key == "amount" || key == "amt":
+        else key == "amount" or key == "amt":
             amount := ParseNumber(value)
-            if !IsNumber(amount) || amount <= 0.0: ret "مبلغ نامعتبر: " + value end
+            if not IsNumber(amount) or amount <= 0.0: ret "مبلغ نامعتبر: " + value end
             spec.amount = amount
 
-        else key == "valid" || key == "ttl":
+        else key == "valid" or key == "ttl":
             seconds := timex.ParseDuration(value)
             if seconds == timex.INVALID: ret "مدت اعتبار نامعتبر: " + value end
             spec.valid_for_seconds = seconds
 
-        else key == "entry" || key == "trigger":
+        else key == "entry" or key == "trigger":
             mode := TriggerMode(value)
             if mode.len() == 0: ret "نحوهٔ ورود نامعتبر (touch یا next): " + value end
             spec.trigger_mode = mode
 
-        else key == "exp" || key == "expiry":
+        else key == "exp" or key == "expiry":
             mode := ExpiryMode(value)
             if mode.len() == 0: ret "نوع انقضا نامعتبر (fixed یا float): " + value end
             spec.expiry_mode = mode
@@ -242,27 +242,27 @@ pub func ParseOrder(args: str, spec &: types.OrderSpec): str:
             if chart.len() == 0: ret "نوع چارت نامعتبر: " + value end
             spec.chart_type = chart
 
-        else key == "payout" || key == "minpayout" || key == "min_payout":
+        else key == "payout" or key == "minpayout" or key == "min_payout":
             percent := Percent(value)
             if percent < 0: ret "حداقل نرخ پرداخت نامعتبر (عددی بین ۰ تا ۱۰۰): " + value end
             spec.min_payout = percent
 
-        else key == "tail" || key == "candletail" || key == "lastsec":
+        else key == "tail" or key == "candletail" or key == "lastsec":
             seconds := timex.ParseDuration(value)
-            if seconds == timex.INVALID || seconds < 0: ret "ثانیه‌های پایانی کندل نامعتبر: " + value end
+            if seconds == timex.INVALID or seconds < 0: ret "ثانیه‌های پایانی کندل نامعتبر: " + value end
             spec.block_last_seconds = seconds
 
-        else key == "gapconfirm" || key == "gapok" || key == "gapyes":
+        else key == "gapconfirm" or key == "gapok" or key == "gapyes":
             mut list := ""
-            if !GapList(value, list): ret "شرط تایید گپ کندلی نامعتبر (بیشتر/برابر/کمتر): " + value end
+            if not GapList(value, list): ret "شرط تایید گپ کندلی نامعتبر (بیشتر/برابر/کمتر): " + value end
             spec.gap_confirm = list
 
-        else key == "gapcancel" || key == "gapno" || key == "gapx":
+        else key == "gapcancel" or key == "gapno" or key == "gapx":
             mut list := ""
-            if !GapList(value, list): ret "شرط کنسل گپ کندلی نامعتبر (بیشتر/برابر/کمتر): " + value end
+            if not GapList(value, list): ret "شرط کنسل گپ کندلی نامعتبر (بیشتر/برابر/کمتر): " + value end
             spec.gap_cancel = list
 
-        else key == "acc" || key == "account":
+        else key == "acc" or key == "account":
             account := AccountMode(value)
             if account.len() == 0: ret "نوع حساب نامعتبر (demo یا real): " + value end
             spec.account_mode = account

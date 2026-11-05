@@ -1,9 +1,9 @@
 package ssid
 
-import parse "../telegram/parse.salam"
 import str
 import encoding.json
-import types "../types.salam"
+include parse "../telegram/parse.salam"
+include types "../types.salam"
 
 pub struct Auth:
     pub ok: bool = false

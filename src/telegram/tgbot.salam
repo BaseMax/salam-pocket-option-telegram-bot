@@ -4,19 +4,19 @@ import str
 import time
 import telegram.bot
 import encoding.json
-import types "../types.salam"
-import store "../storage/store.salam"
-import config "../config.salam"
-import settings "../storage/settings.salam"
-import engine "../engine/engine.salam"
-import broker "../pocket/broker.salam"
-import symbols "../pocket/symbols.salam"
-import texts "texts.salam"
-import timex "../util/timex.salam"
-import parse "parse.salam"
-import tgapi "tgapi.salam"
-import wizard "wizard.salam"
-import ssid "../pocket/ssid.salam"
+include types "../types.salam"
+include store "../storage/store.salam"
+include config "../config.salam"
+include settings "../storage/settings.salam"
+include engine "../engine/engine.salam"
+include broker "../pocket/broker.salam"
+include symbols "../pocket/symbols.salam"
+include texts "texts.salam"
+include timex "../util/timex.salam"
+include parse "parse.salam"
+include tgapi "tgapi.salam"
+include wizard "wizard.salam"
+include ssid "../pocket/ssid.salam"
 
 const SYMBOL_PAGE_CHARS := 3400
 const SYMBOL_MAX_PAGES := 10
@@ -36,7 +36,7 @@ func Allowed(chat_id: i64): bool:
 
     mut configured := false
     mut i := 0
-    while i < list.len():
+    until i < list.len():
         entry := str.Trim(list.get(i))
         if entry.len() > 0:
             configured = true
@@ -46,7 +46,7 @@ func Allowed(chat_id: i64): bool:
     end
 
     if settings.IsOwner(chat_id): ret true end
-    if !configured && settings.Owners().len() == 0:
+    if not configured and settings.Owners().len() == 0:
         settings.AddOwner(chat_id)
         println "[telegram] chat " + str.FromInt(chat_id) + " claimed ownership of this bot"
         ret true
@@ -59,7 +59,7 @@ func Recipients(): Vector<i64>:
     mut list := Admins()
     defer list.free()
     mut i := 0
-    while i < list.len():
+    until i < list.len():
         entry := str.Trim(list.get(i))
         if entry.len() > 0: out.push(parse.ParseInt64(entry)) end
         i = i + 1
@@ -70,15 +70,15 @@ func Recipients(): Vector<i64>:
         mut parts := owners.split(",")
         defer parts.free()
         mut k := 0
-        while k < parts.len():
+        until k < parts.len():
             id := parse.ParseInt64(parts.get(k))
             mut seen := false
             mut j := 0
-            while j < out.len():
+            until j < out.len():
                 if out.get(j) == id: seen = true end
                 j = j + 1
             end
-            if !seen && id != 0: out.push(id) end
+            if not seen and id != 0: out.push(id) end
             k = k + 1
         end
     end
@@ -89,7 +89,7 @@ func Broadcast(text: str):
     mut who := Recipients()
     defer who.free()
     mut i := 0
-    while i < who.len():
+    until i < who.len():
         _m := tgapi.Send(_bot, who.get(i), text, "")
         i = i + 1
     end
@@ -127,9 +127,9 @@ func ModeArg(raw: str): str:
 end
 
 func BalanceSuffix(text: str, mode: str): str:
-    if !settings.NotifyBalance(): ret text end
+    if not settings.NotifyBalance(): ret text end
     mut balance := 0.0
-    if !broker.CachedBalance(mode, balance): ret text end
+    if not broker.CachedBalance(mode, balance): ret text end
     ret texts.WithBalance(text, balance, true)
 end
 
@@ -191,7 +191,7 @@ func CheckSymbol(mode: str, raw: str, problem &: str, note &: str): str:
         if suggestions.len() > 0:
             text = text + "\n\nشاید یکی از این‌ها باشد:"
             mut i := 0
-            while i < suggestions.len():
+            until i < suggestions.len():
                 text = text + "\n• " + texts.AssetLine(suggestions.get(i))
                 i = i + 1
             end
@@ -205,10 +205,10 @@ func CheckSymbol(mode: str, raw: str, problem &: str, note &: str): str:
     if status == "corrected":
         note = "✅ نماد اصلاح شد به " + texts.AssetLine(matched)
     end
-    if !matched.is_open:
+    if not matched.is_open:
         if note.len() > 0: note = note + "\n" end
         note = note + "🔴 بازار این نماد الان بسته است؛ سفارش تا باز شدن بازار منتظر می‌ماند."
-        if twin.symbol.len() > 0 && twin.is_open:
+        if twin.symbol.len() > 0 and twin.is_open:
             note = note + "\nنسخهٔ باز: " + texts.AssetLine(twin)
         end
     end
@@ -220,7 +220,7 @@ func PayoutNote(mode: str, symbol: str, min_payout: i64): str:
 
     mut has_payout := false
     payout := engine.Payout(mode, symbol, has_payout)
-    if !has_payout:
+    if not has_payout:
         ret "ℹ️ حداقل نرخ پرداخت " + str.FromInt(min_payout) +
             "٪ ثبت شد. کارگزار الان نرخی برای این نماد اعلام نکرده؛ اگر لحظهٔ برخورد هم اعلام نکند، معامله زده نمی‌شود."
     end
@@ -240,7 +240,7 @@ func SubmitOrder(chat_id: i64, spec: types.OrderSpec):
         ret
     end
 
-    if !settings.HasCredentials(spec.account_mode):
+    if not settings.HasCredentials(spec.account_mode):
         tgapi.Warn(_bot, chat_id, "برای حساب " + texts.AccountLabel(spec.account_mode) +
             " هنوز نشستی ثبت نشده است.\nبا دستور <code>/session " + spec.account_mode + " &lt;SSID&gt;</code> آن را ثبت کنید.")
         ret
@@ -289,7 +289,7 @@ func SubmitOrder(chat_id: i64, spec: types.OrderSpec):
     text = text + "از این لحظه قیمت لحظه‌ای <b>" + texts.EscapeHtml(saved.symbol) + "</b> زنده دنبال می‌شود."
 
     if notice != 0:
-        if !tgapi.Edit(_bot, chat_id, notice, text, CancelKeyboard(saved.id)):
+        if not tgapi.Edit(_bot, chat_id, notice, text, CancelKeyboard(saved.id)):
             _m := tgapi.Send(_bot, chat_id, text, CancelKeyboard(saved.id))
         end
     else:
@@ -312,7 +312,7 @@ func CmdList(chat_id: i64):
     end
 
     mut i := 0
-    while i < active.len():
+    until i < active.len():
         o := active.get(i)
         mut text := texts.RenderOrder(o, _config.timezone_offset, false)
         idx := broker.Find(o.account_mode, o.symbol)
@@ -337,7 +337,7 @@ func CmdHistory(chat_id: i64):
 
     mut text := "🗂 <b>آخرین سفارش‌ها</b>\n"
     mut i := 0
-    while i < recent.len():
+    until i < recent.len():
         o := recent.get(i)
         text = text + "\n" + texts.Headline(o) + "\n   " + texts.StatusLabel(o.status)
         if o.has_profit: text = text + " · " + timex.FormatMoney(o.profit) end
@@ -367,7 +367,7 @@ end
 
 func CmdBalance(chat_id: i64, args: str):
     mode := ModeArg(args)
-    if !settings.HasCredentials(mode):
+    if not settings.HasCredentials(mode):
         _m := tgapi.Send(_bot, chat_id, "برای حساب " + texts.AccountLabel(mode) + " نشستی ثبت نشده است.", "")
         ret
     end
@@ -443,13 +443,13 @@ func CmdSymbols(chat_id: i64, args: str):
     defer pages.free()
 
     mut i := 0
-    while i < pages.len():
+    until i < pages.len():
         mut title := header
         if pages.len() > 1:
             title = header + "\nصفحهٔ " + str.FromInt((i + 1) as i64) + " از " + str.FromInt(pages.len() as i64)
         end
         mut text := "📋 <b>" + title + "</b>\n\n" + pages.get(i)
-        if i == pages.len() - 1 && shown < matched.len():
+        if i == pages.len() - 1 and shown < matched.len():
             text = text + "\n\n… و " + str.FromInt((matched.len() - shown) as i64) +
                 " مورد دیگر که در این پیام‌ها جا نشد. بخشی از نام را جلوی دستور بنویسید تا کوتاه‌تر شود: " +
                 "<code>/symbols eur</code>"
@@ -471,7 +471,7 @@ func CmdStatus(chat_id: i64):
 
     mut live := 0
     mut k := 0
-    while k < broker.Count():
+    until k < broker.Count():
         if broker.IsLive(k): live = live + 1 end
         k = k + 1
     end
@@ -480,8 +480,8 @@ func CmdStatus(chat_id: i64):
         text = text + "هیچ نشست زنده‌ای باز نیست."
     else:
         mut i := 0
-        while i < broker.Count():
-            if !broker.IsLive(i):
+        until i < broker.Count():
+            if not broker.IsLive(i):
                 i = i + 1
                 continue
             end
@@ -539,29 +539,29 @@ func CmdSet(chat_id: i64, args: str):
     key := parse.NormalizeWord(words.get(0))
     mut value := words.get(1)
     mut i := 2
-    while i < words.len():
+    until i < words.len():
         value = value + " " + words.get(i)
         i = i + 1
     end
 
     mut problem := ""
-    if key == "mode" || key == "account":
+    if key == "mode" or key == "account":
         mode := parse.AccountMode(value)
         if mode.len() == 0: problem = "فقط demo یا real." else: settings.SetMode(mode) end
 
     else key == "amount":
         amount := parse.ParseNumber(value)
-        if !parse.IsNumber(amount) || amount <= 0.0: problem = "مبلغ نامعتبر."
+        if not parse.IsNumber(amount) or amount <= 0.0: problem = "مبلغ نامعتبر."
         else: settings.SetAmount(amount)
         end
 
-    else key == "tf" || key == "timeframe":
+    else key == "tf" or key == "timeframe":
         seconds := timex.ParseDuration(value)
         if seconds == timex.INVALID: problem = "تایم‌فریم نامعتبر.\n\n" + texts.TimeFormatHint()
         else: settings.SetTimeframe(seconds)
         end
 
-    else key == "dur" || key == "duration":
+    else key == "dur" or key == "duration":
         seconds := timex.ParseDuration(value)
         if seconds == timex.INVALID: problem = "مدت نامعتبر.\n\n" + texts.TimeFormatHint()
         else: settings.SetDuration(seconds)
@@ -569,7 +569,7 @@ func CmdSet(chat_id: i64, args: str):
 
     else key == "candles":
         count := parse.ParseNumber(value)
-        if !parse.IsNumber(count) || count < 1.0: problem = "تعداد کندل نامعتبر."
+        if not parse.IsNumber(count) or count < 1.0: problem = "تعداد کندل نامعتبر."
         else: settings.SetCandles((count + 0.5) as i64)
         end
 
@@ -585,27 +585,27 @@ func CmdSet(chat_id: i64, args: str):
         mode := parse.ExpiryMode(value)
         if mode.len() == 0: problem = "نوع انقضا نامعتبر (fixed / float)." else: settings.SetExpiry(mode) end
 
-    else key == "payout" || key == "minpayout":
+    else key == "payout" or key == "minpayout":
         percent := parse.Percent(value)
         if percent < 0: problem = "حداقل نرخ پرداخت نامعتبر: عددی بین ۰ تا ۱۰۰ بدهید، ۰ یعنی بدون شرط."
         else: settings.SetMinPayout(percent)
         end
 
-    else key == "tail" || key == "lastsec":
+    else key == "tail" or key == "lastsec":
         seconds := timex.ParseDuration(value)
-        if seconds == timex.INVALID || seconds < 0: problem = "عدد نامعتبر. تعداد ثانیه بدهید، ۰ یعنی خاموش."
+        if seconds == timex.INVALID or seconds < 0: problem = "عدد نامعتبر. تعداد ثانیه بدهید، ۰ یعنی خاموش."
         else: settings.SetBlockLast(seconds)
         end
 
-    else key == "gapconfirm" || key == "gapok":
+    else key == "gapconfirm" or key == "gapok":
         mut list := ""
-        if !parse.GapList(value, list): problem = "حالت نامعتبر. از برابر / بیشتر / کمتر استفاده کنید، یا none برای برداشتن."
+        if not parse.GapList(value, list): problem = "حالت نامعتبر. از برابر / بیشتر / کمتر استفاده کنید، یا none برای برداشتن."
         else: settings.SetGapConfirm(list)
         end
 
-    else key == "gapcancel" || key == "gapno":
+    else key == "gapcancel" or key == "gapno":
         mut list := ""
-        if !parse.GapList(value, list): problem = "حالت نامعتبر. از برابر / بیشتر / کمتر استفاده کنید، یا none برای برداشتن."
+        if not parse.GapList(value, list): problem = "حالت نامعتبر. از برابر / بیشتر / کمتر استفاده کنید، یا none برای برداشتن."
         else: settings.SetGapCancel(list)
         end
 
@@ -634,7 +634,7 @@ func CmdSession(chat_id: i64, args: str, message_id: i64):
         payload = str.Trim(raw.substr(space + 1, raw.len() - space - 1))
     end
 
-    if mode.len() == 0 || payload.len() == 0:
+    if mode.len() == 0 or payload.len() == 0:
         _m := tgapi.Send(_bot, chat_id, texts.SessionHelp(), "")
         ret
     end
@@ -642,7 +642,7 @@ func CmdSession(chat_id: i64, args: str, message_id: i64):
     tgapi.Delete(_bot, chat_id, message_id)
 
     auth := ssid.Parse(payload, mode, settings.Uid(mode))
-    if !auth.ok:
+    if not auth.ok:
         _m := tgapi.Send(_bot, chat_id, "⚠️ SSID خوانده نشد: " + texts.EscapeHtml(auth.error) + "\n\n" + texts.SessionHelp(), "")
         ret
     end
@@ -685,7 +685,7 @@ func CmdCancel(chat_id: i64, args: str):
     end
 
     o := store.Get(id)
-    if o.id.len() == 0 || o.chat_id != chat_id:
+    if o.id.len() == 0 or o.chat_id != chat_id:
         _m := tgapi.Send(_bot, chat_id, CancelReason("not_found"), "")
         ret
     end
@@ -742,7 +742,7 @@ func HandleCommand(chat_id: i64, message_id: i64, text: str):
             else:
                 settings.SetMode(mode)
                 mut warning := ""
-                if !settings.HasCredentials(mode):
+                if not settings.HasCredentials(mode):
                     warning = "\n\n⚠️ هنوز برای این حساب نشستی ثبت نشده: <code>/session " + mode + " &lt;SSID&gt;</code>"
                 end
                 _m := tgapi.Send(_bot, chat_id, "حساب پیش‌فرض روی " + texts.AccountLabel(mode) + " تنظیم شد." + warning, "")
@@ -791,7 +791,7 @@ func HandleCallback(chat_id: i64, query_id: str, data: str, message_id: i64, mes
     if str.StartsWith(data, "c:"):
         id := data.substr(2, data.len() - 2)
         o := store.Get(id)
-        if o.id.len() == 0 || o.chat_id != chat_id:
+        if o.id.len() == 0 or o.chat_id != chat_id:
             tgapi.Answer(_bot, query_id, CancelReason("not_found"), false)
             ret
         end
@@ -815,14 +815,14 @@ pub func Init(c: config.Config): bool:
     settings.Init(c)
 
     me := bot.GetMe(_bot)
-    if !me.ok:
+    if not me.ok:
         println "[telegram] could not reach Telegram: " + me.description
         ret false
     end
     println "[telegram] bot @" + bot.ParseUser(me.result).username + " is live"
 
     mut mode := types.MODE_DEMO
-    repeat 2 with i:
+    repeat 2 in i:
         if i == 1: mode = types.MODE_REAL end
         raw := settings.Ssid(mode)
         if raw.len() > 0:
@@ -846,7 +846,7 @@ pub func Dispatch(u: bot.Update):
     if u.has_message:
         m := u.message
         chat_id := m.chat.id
-        if !Allowed(chat_id):
+        if not Allowed(chat_id):
             _m := tgapi.Send(_bot, chat_id, "⛔️ دسترسی ندارید.\nشناسهٔ چت شما: <code>" + str.FromInt(chat_id) +
                 "</code>\nبرای دسترسی، این شناسه را در <code>TELEGRAM_ADMIN_IDS</code> قرار دهید.", "")
             ret
@@ -866,7 +866,7 @@ pub func Dispatch(u: bot.Update):
     if u.has_callback_query:
         q := u.callback_query
         chat_id := q.message.chat.id
-        if !Allowed(chat_id):
+        if not Allowed(chat_id):
             tgapi.Answer(_bot, q.id, "⛔️ دسترسی ندارید.", true)
             ret
         end
@@ -880,9 +880,9 @@ pub func AssetPages(list: Vector<symbols.Asset>, shown &: int): Vector<str>:
     mut body := ""
 
     mut i := 0
-    while i < list.len():
+    until i < list.len():
         line := "• " + texts.AssetLine(list.get(i))
-        if body.len() > 0 && body.len() + line.len() + 1 > SYMBOL_PAGE_CHARS:
+        if body.len() > 0 and body.len() + line.len() + 1 > SYMBOL_PAGE_CHARS:
             pages.push(body)
             body = ""
             if pages.len() >= SYMBOL_MAX_PAGES: ret pages end
@@ -957,7 +957,7 @@ pub func Apply(result: str): int:
     defer updates.free()
 
     mut i := 0
-    while i < updates.len():
+    until i < updates.len():
         u := updates.get(i)
         Dispatch(u)
         if u.update_id >= _offset: _offset = u.update_id + 1 as i64 end
@@ -968,7 +968,7 @@ end
 
 pub func Poll(timeout: i64):
     resp := bot.GetUpdates(_bot, _offset, 20 as i64, timeout)
-    if !resp.ok: ret end
+    if not resp.ok: ret end
     _n := Apply(resp.result)
 end
 
@@ -985,7 +985,7 @@ pub func Configure(c: config.Config):
 end
 
 pub func Notify():
-    while true:
+    until true:
         e := engine.TakeEvent()
         if e.kind.len() == 0: break end
 

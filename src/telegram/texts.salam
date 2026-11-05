@@ -1,9 +1,9 @@
 package texts
 
 import str
-import types "../types.salam"
-import timex "../util/timex.salam"
-import symbols "../pocket/symbols.salam"
+include types "../types.salam"
+include timex "../util/timex.salam"
+include symbols "../pocket/symbols.salam"
 
 pub const RETIRED_MARK := "⌛️ این پنل"
 
@@ -116,7 +116,7 @@ pub func GapListLabel(list: str): str:
 end
 
 pub func GapSummary(confirm: str, cancel: str): str:
-    if confirm.len() == 0 && cancel.len() == 0: ret "" end
+    if confirm.len() == 0 and cancel.len() == 0: ret "" end
     mut out := ""
     if confirm.len() > 0: out = "تایید: " + GapListLabel(confirm) end
     if cancel.len() > 0:
@@ -154,7 +154,7 @@ pub func RenderOrder(o: types.Order, offset_minutes: i64, compact: bool): str:
     if o.min_payout > 0:
         out = out + "\nحداقل نرخ پرداخت: <b>" + PayoutLabel(o.min_payout) + "</b>"
     end
-    if o.block_last_seconds > 0 && o.expiry_mode == types.EXPIRY_FLOATING:
+    if o.block_last_seconds > 0 and o.expiry_mode == types.EXPIRY_FLOATING:
         out = out + "\nورود ممنوع در: <b>" + TailLabel(o.block_last_seconds) + "</b>"
     end
     gap := GapSummary(o.gap_confirm, o.gap_cancel)
@@ -162,7 +162,7 @@ pub func RenderOrder(o: types.Order, offset_minutes: i64, compact: bool): str:
         out = out + "\nگپ کندلی — " + gap
     end
 
-    if !compact:
+    if not compact:
         if o.has_reference:
             out = out + "\nقیمت هنگام ثبت: <code>" + timex.FormatPrice(o.reference_price) + "</code>"
         end
@@ -177,7 +177,7 @@ pub func RenderOrder(o: types.Order, offset_minutes: i64, compact: bool): str:
     if o.opened_at > 0.0:
         out = out + "\nباز شد در: " + timex.FormatTime(o.opened_at, offset_minutes) + " · قیمت <code>" + timex.FormatPrice(o.open_price) + "</code>"
     end
-    if o.closes_at > 0.0 && o.closed_at == 0.0:
+    if o.closes_at > 0.0 and o.closed_at == 0.0:
         out = out + "\nزمان بسته شدن: " + timex.FormatTime(o.closes_at, offset_minutes)
     end
     if o.closed_at > 0.0:
@@ -191,7 +191,7 @@ pub func RenderOrder(o: types.Order, offset_minutes: i64, compact: bool): str:
 end
 
 pub func WithBalance(text: str, balance: f64, show: bool): str:
-    if !show: ret text end
+    if not show: ret text end
     ret text + "\n\n💵 موجودی حساب: <b>" + timex.FormatMoney(balance) + "</b>"
 end
 

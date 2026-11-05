@@ -16,26 +16,26 @@ pub const INVALID := 0 - 1 as i64
 const ZWNJ := "‌"
 
 func UnitSeconds(word: str): i64:
-    if word == "s" || word == "sec" || word == "secs" || word == "second" || word == "seconds": ret 1 end
-    if word == "ث" || word == "ثانیه" || word == "ثانیهها" || word == "ثانیهای": ret 1 end
+    if word == "s" or word == "sec" or word == "secs" or word == "second" or word == "seconds": ret 1 end
+    if word == "ث" or word == "ثانیه" or word == "ثانیهها" or word == "ثانیهای": ret 1 end
 
-    if word == "m" || word == "min" || word == "mins" || word == "minute" || word == "minutes": ret MINUTE end
-    if word == "د" || word == "دق" || word == "دقیقه" || word == "دقیقهها" || word == "دقیقهای" || word == "دقایق": ret MINUTE end
+    if word == "m" or word == "min" or word == "mins" or word == "minute" or word == "minutes": ret MINUTE end
+    if word == "د" or word == "دق" or word == "دقیقه" or word == "دقیقهها" or word == "دقیقهای" or word == "دقایق": ret MINUTE end
 
-    if word == "h" || word == "hr" || word == "hrs" || word == "hour" || word == "hours": ret HOUR end
-    if word == "س" || word == "ساعت" || word == "ساعتها" || word == "ساعته": ret HOUR end
+    if word == "h" or word == "hr" or word == "hrs" or word == "hour" or word == "hours": ret HOUR end
+    if word == "س" or word == "ساعت" or word == "ساعتها" or word == "ساعته": ret HOUR end
 
-    if word == "d" || word == "day" || word == "days": ret DAY end
-    if word == "ر" || word == "روز" || word == "روزها" || word == "روزه": ret DAY end
+    if word == "d" or word == "day" or word == "days": ret DAY end
+    if word == "ر" or word == "روز" or word == "روزها" or word == "روزه": ret DAY end
 
-    if word == "w" || word == "wk" || word == "wks" || word == "week" || word == "weeks": ret WEEK end
-    if word == "هفته" || word == "هفتهها" || word == "هفتهای": ret WEEK end
+    if word == "w" or word == "wk" or word == "wks" or word == "week" or word == "weeks": ret WEEK end
+    if word == "هفته" or word == "هفتهها" or word == "هفتهای": ret WEEK end
 
-    if word == "mo" || word == "mon" || word == "mons" || word == "month" || word == "months": ret MONTH end
-    if word == "ماه" || word == "ماهها" || word == "ماهه": ret MONTH end
+    if word == "mo" or word == "mon" or word == "mons" or word == "month" or word == "months": ret MONTH end
+    if word == "ماه" or word == "ماهها" or word == "ماهه": ret MONTH end
 
-    if word == "y" || word == "yr" || word == "yrs" || word == "year" || word == "years": ret YEAR end
-    if word == "سال" || word == "سالها" || word == "ساله": ret YEAR end
+    if word == "y" or word == "yr" or word == "yrs" or word == "year" or word == "years": ret YEAR end
+    if word == "سال" or word == "سالها" or word == "ساله": ret YEAR end
 
     ret 0
 end
@@ -62,7 +62,7 @@ func Normalize(raw: str): str:
 end
 
 func IsDigitByte(c: str): bool:
-    ret c == "0" || c == "1" || c == "2" || c == "3" || c == "4" || c == "5" || c == "6" || c == "7" || c == "8" || c == "9"
+    ret c == "0" or c == "1" or c == "2" or c == "3" or c == "4" or c == "5" or c == "6" or c == "7" or c == "8" or c == "9"
 end
 
 func Pad2(n: i64): str:
@@ -79,17 +79,17 @@ pub func ParseDuration(raw: str): i64:
     mut i := 0
     n := text.len()
 
-    while i < n:
-        while i < n && text.substr(i, 1) == " ": i = i + 1 end
+    until i < n:
+        until i < n and text.substr(i, 1) == " ": i = i + 1 end
         if i >= n: break end
 
         start := i
         mut dots := 0
-        while i < n:
+        until i < n:
             c := text.substr(i, 1)
             if IsDigitByte(c):
                 i = i + 1
-            else c == "." && dots == 0:
+            else c == "." and dots == 0:
                 dots = dots + 1
                 i = i + 1
             else:
@@ -99,11 +99,11 @@ pub func ParseDuration(raw: str): i64:
         if i == start: ret INVALID end
         value := str.ToFloat(text.substr(start, i - start))
 
-        while i < n && text.substr(i, 1) == " ": i = i + 1 end
+        until i < n and text.substr(i, 1) == " ": i = i + 1 end
         wstart := i
-        while i < n:
+        until i < n:
             c := text.substr(i, 1)
-            if c == " " || IsDigitByte(c): break end
+            if c == " " or IsDigitByte(c): break end
             i = i + 1
         end
 
@@ -118,7 +118,7 @@ pub func ParseDuration(raw: str): i64:
         matched = true
     end
 
-    if !matched: ret INVALID end
+    if not matched: ret INVALID end
     seconds := (total + 0.5) as i64
     if seconds <= 0: ret INVALID end
     ret seconds
@@ -235,10 +235,10 @@ pub func FormatPrice(price: f64): str:
     if abs >= 100.0: decimals = 3 end
 
     mut text := conv.FormatFloatPrec(price, decimals)
-    while text.len() > 1 && text.substr(text.len() - 1, 1) == "0":
+    until text.len() > 1 and text.substr(text.len() - 1, 1) == "0":
         text = text.substr(0, text.len() - 1)
     end
-    if text.len() > 1 && text.substr(text.len() - 1, 1) == ".":
+    if text.len() > 1 and text.substr(text.len() - 1, 1) == ".":
         text = text.substr(0, text.len() - 1)
     end
     ret text

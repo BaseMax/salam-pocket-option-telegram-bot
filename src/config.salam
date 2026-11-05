@@ -1,9 +1,9 @@
 package config
 
-import parse "telegram/parse.salam"
 import os
 import str
-import timex "util/timex.salam"
+include parse "telegram/parse.salam"
+include timex "util/timex.salam"
 
 pub struct Config:
     pub token: str = ""
@@ -118,7 +118,7 @@ pub func EffectiveDuration(expiry_mode: str, duration_seconds: i64, timeframe_se
 end
 
 pub func CheckLimits(c: Config, amount: f64, expiry_mode: str, duration_seconds: i64, timeframe_seconds: i64, candle_count: i64): str:
-    if amount < c.min_amount || amount > c.max_amount:
+    if amount < c.min_amount or amount > c.max_amount:
         ret "مبلغ باید بین " + timex.FormatMoney(c.min_amount) + " و " + timex.FormatMoney(c.max_amount) + " باشد."
     end
     d := EffectiveDuration(expiry_mode, duration_seconds, timeframe_seconds, candle_count)

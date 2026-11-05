@@ -2,12 +2,12 @@ package engine
 
 import str
 import time
-import types "../types.salam"
-import store "../storage/store.salam"
-import broker "../pocket/broker.salam"
-import timex "../util/timex.salam"
-import config "../config.salam"
-import symbols "../pocket/symbols.salam"
+include types "../types.salam"
+include store "../storage/store.salam"
+include broker "../pocket/broker.salam"
+include timex "../util/timex.salam"
+include config "../config.salam"
+include symbols "../pocket/symbols.salam"
 
 pub const EV_ARMED := "armed"
 pub const EV_TRIGGERED := "triggered"
@@ -53,7 +53,7 @@ end
 
 func FindAttachment(order_id: str): int:
     mut i := 0
-    while i < _attachments.len():
+    until i < _attachments.len():
         if _attachments.get(i).order_id == order_id: ret i end
         i = i + 1
     end
@@ -72,7 +72,7 @@ func Attach(o: types.Order):
     if FindAttachment(o.id) >= 0: ret end
 
     session := broker.Acquire(o.account_mode, o.symbol, o.timeframe_seconds)
-    if !broker.IsLive(session):
+    if not broker.IsLive(session):
         Finish(o, types.ST_FAILED, "could not open a broker session for this order",
             EV_FAILED, 0.0, "اتصال به کارگزار برای این سفارش باز نشد.")
         ret
@@ -92,18 +92,18 @@ func HousekeepOne(index: int, now: f64):
         ret
     end
 
-    if o.status == types.ST_PENDING && o.valid_until > 0.0 && now >= o.valid_until:
+    if o.status == types.ST_PENDING and o.valid_until > 0.0 and now >= o.valid_until:
         Finish(o, types.ST_EXPIRED, "the trigger price was never reached", EV_EXPIRED, 0.0, "")
         ret
     end
 
     s := broker.Get(a.session)
-    if o.status == types.ST_ARMED && s.has_price:
+    if o.status == types.ST_ARMED and s.has_price:
         MaybeEnterOnNewCandle(o, now + (s.time_offset as f64), s.price, s.time_offset, s.tick_follows_gap)
         ret
     end
 
-    if o.status == types.ST_OPEN && !a.settlement_warned && o.closes_at > 0.0:
+    if o.status == types.ST_OPEN and not a.settlement_warned and o.closes_at > 0.0:
         if now > o.closes_at + (_config.order_settle_grace as f64):
             mut warned := a
             warned.settlement_warned = true
@@ -124,14 +124,14 @@ func Finish(o: types.Order, status: str, note: str, kind: str, price: f64, detai
 end
 
 func PayoutNote(min_payout: i64, payout: i64, has_payout: bool): str:
-    if !has_payout:
+    if not has_payout:
         ret "the broker quoted no payout, and this order needs at least " + str.FromInt(min_payout) + "%"
     end
     ret "payout was " + str.FromInt(payout) + "%, under the " + str.FromInt(min_payout) + "% this order needs"
 end
 
 func PayoutDetail(min_payout: i64, payout: i64, has_payout: bool): str:
-    if !has_payout:
+    if not has_payout:
         ret "کارگزار در این لحظه نرخ پرداخت این نماد را اعلام نکرد، پس شرط «حداقل " +
             str.FromInt(min_payout) + "٪» قابل بررسی نبود."
     end
@@ -161,7 +161,7 @@ end
 
 func ReadGap(o: types.Order, s: broker.Session, entry_time: f64, relation &: str): bool:
     relation = ""
-    if !s.has_candle || !s.has_previous_close: ret false end
+    if not s.has_candle or not s.has_previous_close: ret false end
     if s.timeframe != o.timeframe_seconds: ret false end
     if s.candle_open_time != timex.CandleOpenTime(entry_time, o.timeframe_seconds): ret false end
     relation = GapRelation(s.candle_open_price, s.previous_close)
@@ -174,14 +174,14 @@ func ConditionsMet(o: types.Order, s: broker.Session, entry_time: f64, note &: s
 
     mut has_payout := false
     payout := Payout(o.account_mode, o.symbol, has_payout)
-    if !PayoutAllows(o.min_payout, payout, has_payout):
+    if not PayoutAllows(o.min_payout, payout, has_payout):
         note = PayoutNote(o.min_payout, payout, has_payout)
         detail = PayoutDetail(o.min_payout, payout, has_payout)
         ret false
     end
 
     left := timex.CandleCloseTime(entry_time, o.timeframe_seconds) - entry_time
-    if !TailAllows(o.expiry_mode, o.block_last_seconds, left):
+    if not TailAllows(o.expiry_mode, o.block_last_seconds, left):
         note = "only " + str.FromInt(left as i64) + "s of the candle were left, under the " +
             str.FromInt(o.block_last_seconds) + "s this order keeps clear"
         detail = "از کندل فقط " + str.FromInt(left as i64) + " ثانیه مانده بود و شما ورود در " +
@@ -189,16 +189,16 @@ func ConditionsMet(o: types.Order, s: broker.Session, entry_time: f64, note &: s
         ret false
     end
 
-    if o.gap_confirm.len() == 0 && o.gap_cancel.len() == 0: ret true end
+    if o.gap_confirm.len() == 0 and o.gap_cancel.len() == 0: ret true end
 
     mut relation := ""
-    if !ReadGap(o, s, entry_time, relation):
+    if not ReadGap(o, s, entry_time, relation):
         note = "the candle gap could not be read at entry"
         detail = "گپ کندلی در این لحظه خوانده نشد: هنوز یک کندل کامل دیده نشده یا جریان قیمت قطع بوده است. " +
             "چون شرط گپ گذاشته بودید، معامله بدون بررسی آن ارسال نمی‌شود."
         ret false
     end
-    if !GapAllows(o.gap_confirm, o.gap_cancel, relation):
+    if not GapAllows(o.gap_confirm, o.gap_cancel, relation):
         note = "candle gap was " + relation + ", refused by this order"
         detail = "اپن کندل فعلی " + timex.FormatPrice(s.candle_open_price) +
             " نسبت به کلوز کندل قبلی " + timex.FormatPrice(s.previous_close) +
@@ -224,7 +224,7 @@ func Place(o: types.Order, entry_time: f64):
 
     mut refusal := ""
     mut refusal_detail := ""
-    if !ConditionsMet(o, session, entry_time, refusal, refusal_detail):
+    if not ConditionsMet(o, session, entry_time, refusal, refusal_detail):
         Finish(o, types.ST_SKIPPED, refusal, EV_SKIPPED, o.triggered_price, refusal_detail)
         ret
     end
@@ -240,14 +240,14 @@ func Place(o: types.Order, entry_time: f64):
         _config.order_ack_timeout * 1000, _config.max_tick_gap)
 
     mut retried := ack
-    if !ack.ok && ack.refused && close_at > 0.0:
+    if not ack.ok and ack.refused and close_at > 0.0:
         mut seconds := (broker_close - entry_time + 0.5) as i64
         if seconds < _config.min_duration: seconds = _config.min_duration end
         retried = broker.PlaceOrder(a.session, o.amount, o.direction, seconds, 0.0,
             _config.order_ack_timeout * 1000, _config.max_tick_gap)
     end
 
-    if !retried.ok:
+    if not retried.ok:
         Finish(o, types.ST_FAILED, retried.error, EV_FAILED, 0.0, retried.error)
         ret
     end
@@ -317,12 +317,12 @@ func StepOrder(index: int):
     end
 
     session := broker.Get(a.session)
-    if !session.has_price: ret end
+    if not session.has_price: ret end
     price := session.price
     tick_time := session.last_tick_time
 
     if o.status == types.ST_PENDING:
-        if !o.has_reference:
+        if not o.has_reference:
             mut seeded := o
             seeded.reference_price = price
             seeded.has_reference = true
@@ -348,7 +348,7 @@ end
 
 func ApplyDeal(d: broker.Deal):
     o := store.FindByDealId(d.deal_id)
-    if o.id.len() == 0 || o.closed_at > 0.0: ret end
+    if o.id.len() == 0 or o.closed_at > 0.0: ret end
 
     idx := FindAttachment(o.id)
     mut offset := 0 as i64
@@ -373,7 +373,7 @@ end
 
 func CheckAuth():
     mut i := 0
-    while i < _attachments.len():
+    until i < _attachments.len():
         s := broker.Get(_attachments.get(i).session)
         if s.auth_failed:
             mut e := Event {}
@@ -390,14 +390,14 @@ end
 
 pub func Payout(mode: str, symbol: str, has_payout &: bool): i64:
     a := symbols.Find(broker.Assets(mode), symbol)
-    has_payout = a.symbol.len() > 0 && a.has_payout
-    if !has_payout: ret 0 end
+    has_payout = a.symbol.len() > 0 and a.has_payout
+    if not has_payout: ret 0 end
     ret a.payout
 end
 
 pub func PayoutAllows(min_payout: i64, payout: i64, has_payout: bool): bool:
     if min_payout <= 0: ret true end
-    if !has_payout: ret false end
+    if not has_payout: ret false end
     ret payout >= min_payout
 end
 
@@ -415,20 +415,20 @@ end
 
 pub func GapAllows(confirm: str, cancel: str, relation: str): bool:
     if types.GapListHas(cancel, relation): ret false end
-    if confirm.len() > 0 && !types.GapListHas(confirm, relation): ret false end
+    if confirm.len() > 0 and not types.GapListHas(confirm, relation): ret false end
     ret true
 end
 
 pub func ResolveApproachSide(trigger_price: f64, reference_price: f64, has_reference: bool): str:
-    if !has_reference: ret types.SIDE_ANY end
+    if not has_reference: ret types.SIDE_ANY end
     if reference_price < trigger_price: ret types.SIDE_BELOW end
     if reference_price > trigger_price: ret types.SIDE_ABOVE end
     ret types.SIDE_ANY
 end
 
 pub func Crossed(previous: f64, current: f64, target: f64): bool:
-    if previous <= target && current >= target: ret true end
-    if previous >= target && current <= target: ret true end
+    if previous <= target and current >= target: ret true end
+    if previous >= target and current <= target: ret true end
     ret false
 end
 
@@ -436,7 +436,7 @@ pub func IsTouched(o: types.Order, prior_price: f64, has_prior: bool, price: f64
     if o.approach_side == types.SIDE_BELOW: ret price >= o.trigger_price end
     if o.approach_side == types.SIDE_ABOVE: ret price <= o.trigger_price end
     if price == o.trigger_price: ret true end
-    if !has_prior: ret false end
+    if not has_prior: ret false end
     ret Crossed(prior_price, price, o.trigger_price)
 end
 
@@ -449,7 +449,7 @@ pub func ResolveExpiry(o: types.Order, entry_time: f64, min_duration: i64, close
 
     target := timex.NthCandleCloseTime(entry_time, o.timeframe_seconds, o.candle_count)
     mut close := target
-    while close - entry_time < (min_duration as f64):
+    until close - entry_time < (min_duration as f64):
         close = close + (o.timeframe_seconds as f64)
     end
     close_at = close
@@ -465,7 +465,7 @@ pub func Start(c: config.Config):
     mut active := store.ListActive()
     defer active.free()
     mut i := 0
-    while i < active.len():
+    until i < active.len():
         o := active.get(i)
         if o.status == types.ST_PLACING:
             Finish(o, types.ST_FAILED, "bot restarted while the order was being sent, verify on the broker",
@@ -483,7 +483,7 @@ end
 
 pub func Stop():
     mut i := 0
-    while i < _attachments.len():
+    until i < _attachments.len():
         broker.Release(_attachments.get(i).session)
         i = i + 1
     end
@@ -501,7 +501,7 @@ pub func Price(mode: str, symbol: str, wait_ms: i64): f64:
     idx := broker.Acquire(mode, symbol, _config.default_timeframe)
     deadline := time.NowMillis() + wait_ms
     mut price := 0.0
-    while time.NowMillis() < deadline:
+    until time.NowMillis() < deadline:
         broker.Pump(100, _config.max_tick_gap)
         s := broker.Get(idx)
         if s.has_price:
@@ -518,7 +518,7 @@ pub func Balance(mode: str, wait_ms: i64): f64:
     broker.RefreshBalance(idx)
     deadline := time.NowMillis() + wait_ms
     mut balance := 0.0
-    while time.NowMillis() < deadline:
+    until time.NowMillis() < deadline:
         broker.Pump(100, _config.max_tick_gap)
         s := broker.Get(idx)
         if s.has_balance:
@@ -535,7 +535,7 @@ pub func Assets(mode: str, wait_ms: i64): Vector<symbols.Asset>:
 
     idx := broker.Acquire(mode, "", 0 as i64)
     deadline := time.NowMillis() + wait_ms
-    while time.NowMillis() < deadline:
+    until time.NowMillis() < deadline:
         broker.Pump(100, _config.max_tick_gap)
         if broker.AssetCount(mode) > 0: break end
     end
@@ -545,7 +545,7 @@ end
 
 pub func CreateOrder(o: types.Order): types.Order:
     mut row := o
-    if !row.has_reference:
+    if not row.has_reference:
         price := Price(row.account_mode, row.symbol, 4000 as i64)
         if price > 0.0:
             row.reference_price = price
@@ -562,8 +562,8 @@ end
 pub func Cancel(order_id: str): str:
     o := store.Get(order_id)
     if o.id.len() == 0: ret "not_found" end
-    if o.status == types.ST_OPEN || o.status == types.ST_PLACING: ret "already_open" end
-    if !types.IsCancellable(o.status): ret "not_active" end
+    if o.status == types.ST_OPEN or o.status == types.ST_PLACING: ret "already_open" end
+    if not types.IsCancellable(o.status): ret "not_active" end
 
     mut done := o
     done.status = types.ST_CANCELLED
@@ -574,7 +574,7 @@ end
 
 pub func ReloadCredentials(mode: str):
     mut i := 0
-    while i < _attachments.len():
+    until i < _attachments.len():
         a := _attachments.get(i)
         o := store.Get(a.order_id)
         if o.account_mode == mode:
@@ -589,9 +589,9 @@ pub func ReloadCredentials(mode: str):
     mut active := store.ListActive()
     defer active.free()
     mut k := 0
-    while k < active.len():
+    until k < active.len():
         o := active.get(k)
-        if o.account_mode == mode && o.status != types.ST_PLACING: Attach(o) end
+        if o.account_mode == mode and o.status != types.ST_PLACING: Attach(o) end
         k = k + 1
     end
 end
@@ -600,13 +600,13 @@ pub func Step(pump_ms: int):
     broker.Pump(pump_ms, _config.max_tick_gap)
 
     mut i := 0
-    while i < _attachments.len():
+    until i < _attachments.len():
         before := _attachments.len()
         StepOrder(i)
         if _attachments.len() == before: i = i + 1 end
     end
 
-    while true:
+    until true:
         d := broker.TakeDeal()
         if d.deal_id.len() == 0: break end
         ApplyDeal(d)
@@ -618,7 +618,7 @@ end
 pub func Housekeep():
     now := timex.NowSeconds()
     mut i := 0
-    while i < _attachments.len():
+    until i < _attachments.len():
         before := _attachments.len()
         HousekeepOne(i, now)
         if _attachments.len() == before: i = i + 1 end

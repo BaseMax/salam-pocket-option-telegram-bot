@@ -1,13 +1,13 @@
 package wizard
 
 import str
-import types "../types.salam"
-import timex "../util/timex.salam"
-import texts "texts.salam"
-import parse "parse.salam"
-import symbols "../pocket/symbols.salam"
-import tgapi "tgapi.salam"
 import telegram.bot
+include types "../types.salam"
+include timex "../util/timex.salam"
+include texts "texts.salam"
+include parse "parse.salam"
+include symbols "../pocket/symbols.salam"
+include tgapi "tgapi.salam"
 
 pub const EXPIRED_NOTE := "⌛️ این پنل منقضی شده و دکمه‌هایش دیگر کار نمی‌کنند. برای سفارش تازه /new را بزنید."
 pub const REPLACED_NOTE := "⌛️ این پنل باطل شد چون پنل تازه‌تری ساخته شد. از پنل جدید استفاده کنید."
@@ -47,7 +47,7 @@ end
 
 func Find(chat_id: i64): int:
     mut i := 0
-    while i < _drafts.len():
+    until i < _drafts.len():
         if _drafts.get(i).chat_id == chat_id: ret i end
         i = i + 1
     end
@@ -126,8 +126,8 @@ func PromptToast(field: str): str:
 end
 
 func IsPromptField(action: str): bool:
-    ret action == "symbol" || action == "price" || action == "amount" || action == "duration" ||
-        action == "candles" || action == "valid" || action == "payout" || action == "tail"
+    ret action == "symbol" or action == "price" or action == "amount" or action == "duration"  or 
+        action == "candles" or action == "valid" or action == "payout" or action == "tail"
 end
 
 func SymbolText(d: Draft): str:
@@ -136,7 +136,7 @@ func SymbolText(d: Draft): str:
 end
 
 func PriceText(d: Draft): str:
-    if !d.has_price: ret "(تعیین نشده)" end
+    if not d.has_price: ret "(تعیین نشده)" end
     ret timex.FormatPrice(d.trigger_price)
 end
 
@@ -206,7 +206,7 @@ func RenderPanel(d: Draft, final: bool): str:
 
     if d.awaiting.len() > 0:
         out = out + "\n\n✍️ " + PromptTitle(d.awaiting) + "\nپاسخ را در همین چت بنویسید و بفرستید."
-    else d.symbol.len() == 0 || !d.has_price:
+    else d.symbol.len() == 0 or not d.has_price:
         out = out + "\n\n⚠️ برای ثبت، نماد و قیمت ورود هدف الزامی است. روی دکمه‌شان بزنید و مقدار را تایپ کنید."
     else:
         out = out + "\n\n💡 روی هر دکمه بزنید تا تغییر کند. دکمه‌های ✍️ مقدارشان را از شما می‌پرسند."
@@ -324,7 +324,7 @@ func MainKeyboard(d: Draft): str:
     tgapi.Row(k)
 
     mut gap := "—"
-    if d.gap_confirm.len() > 0 || d.gap_cancel.len() > 0: gap = "✅" end
+    if d.gap_confirm.len() > 0 or d.gap_cancel.len() > 0: gap = "✅" end
     tgapi.Button(k, "🕯 گپ کندلی: " + gap, "w:gap")
     if d.expiry_mode == types.EXPIRY_FLOATING:
         mut tail := "خاموش"
@@ -361,7 +361,7 @@ func Refresh(b: bot.Bot, index: int):
 
     d.rendered = snapshot
     _drafts.set(index, d)
-    if !tgapi.Edit(b, d.chat_id, d.message_id, text, markup):
+    if not tgapi.Edit(b, d.chat_id, d.message_id, text, markup):
         mut failed := _drafts.get(index)
         failed.rendered = ""
         _drafts.set(index, failed)
@@ -404,14 +404,14 @@ func ApplyInput(d &: Draft, field: str, raw: str): str:
     end
     if field == "price":
         price := parse.ParseNumber(raw)
-        if !parse.IsNumber(price) || price <= 0.0: ret "قیمت نامعتبر است. فقط عدد بفرستید، مثلاً <code>1.95320</code>." end
+        if not parse.IsNumber(price) or price <= 0.0: ret "قیمت نامعتبر است. فقط عدد بفرستید، مثلاً <code>1.95320</code>." end
         d.trigger_price = price
         d.has_price = true
         ret ""
     end
     if field == "amount":
         amount := parse.ParseNumber(raw)
-        if !parse.IsNumber(amount) || amount <= 0.0: ret "مبلغ نامعتبر است. فقط عدد بفرستید، مثلاً <code>5</code>." end
+        if not parse.IsNumber(amount) or amount <= 0.0: ret "مبلغ نامعتبر است. فقط عدد بفرستید، مثلاً <code>5</code>." end
         d.amount = amount
         ret ""
     end
@@ -426,7 +426,7 @@ func ApplyInput(d &: Draft, field: str, raw: str): str:
     end
     if field == "candles":
         count := parse.ParseNumber(raw)
-        if !parse.IsNumber(count) || count < 1.0: ret "تعداد کندل نامعتبر است. عددی بزرگ‌تر از صفر بفرستید، مثلاً <code>1</code>." end
+        if not parse.IsNumber(count) or count < 1.0: ret "تعداد کندل نامعتبر است. عددی بزرگ‌تر از صفر بفرستید، مثلاً <code>1</code>." end
         d.candle_count = (count + 0.5) as i64
         d.expiry_mode = types.EXPIRY_FLOATING
         ret ""
@@ -446,7 +446,7 @@ func ApplyInput(d &: Draft, field: str, raw: str): str:
             ret ""
         end
         seconds := timex.ParseDuration(trimmed_tail)
-        if seconds == timex.INVALID || seconds < 0:
+        if seconds == timex.INVALID or seconds < 0:
             ret "عدد نامعتبر است. تعداد ثانیه را بفرستید، مثلاً <code>5</code>؛ برای خاموش کردن <code>0</code>."
         end
         d.block_last_seconds = seconds
@@ -524,7 +524,7 @@ end
 pub func HandleTap(b: bot.Bot, chat_id: i64, payload: str, message_id: i64, query_id: str, message_text: str): str:
     idx := Find(chat_id)
     if idx < 0:
-        if message_text.len() > 0 && !str.Contains(message_text, texts.RETIRED_MARK):
+        if message_text.len() > 0 and not str.Contains(message_text, texts.RETIRED_MARK):
             _e := tgapi.EditPlain(b, chat_id, message_id, message_text + "\n\n" + EXPIRED_NOTE)
         end
         tgapi.Answer(b, query_id, "این پنل منقضی شده است. برای سفارش تازه /new را بزنید.", false)
@@ -532,8 +532,8 @@ pub func HandleTap(b: bot.Bot, chat_id: i64, payload: str, message_id: i64, quer
     end
 
     mut d := _drafts.get(idx)
-    if d.message_id != 0 && message_id != 0 && message_id != d.message_id:
-        if message_text.len() > 0 && !str.Contains(message_text, texts.RETIRED_MARK):
+    if d.message_id != 0 and message_id != 0 and message_id != d.message_id:
+        if message_text.len() > 0 and not str.Contains(message_text, texts.RETIRED_MARK):
             _e := tgapi.EditPlain(b, chat_id, message_id, message_text + "\n\n" + REPLACED_NOTE)
         end
         tgapi.Answer(b, query_id, "این پنل باطل شده است. از پنل تازه‌تر پایین چت استفاده کنید.", false)
@@ -574,7 +574,7 @@ pub func HandleTap(b: bot.Bot, chat_id: i64, payload: str, message_id: i64, quer
     end
 
     if action == "submit":
-        if d.symbol.len() == 0 || !d.has_price:
+        if d.symbol.len() == 0 or not d.has_price:
             tgapi.Answer(b, query_id, "اول نماد و قیمت ورود را کامل کنید: روی دکمه‌شان بزنید و مقدار را تایپ کنید.", true)
             Refresh(b, idx)
             ret ""
@@ -603,7 +603,7 @@ pub func HandleTap(b: bot.Bot, chat_id: i64, payload: str, message_id: i64, quer
         end
         toast = texts.ExpiryHelp(d.expiry_mode)
     else action == "info":
-        d.info = !d.info
+        d.info = not d.info
     else action == "refresh":
         d.menu = ""
     else action == "gap":

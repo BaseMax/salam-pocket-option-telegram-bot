@@ -1,12 +1,12 @@
 package store
 
-import parse "../telegram/parse.salam"
 import str
 import conv
 import rand
 import db.sqlite
-import types "../types.salam"
-import timex "../util/timex.salam"
+include parse "../telegram/parse.salam"
+include types "../types.salam"
+include timex "../util/timex.salam"
 
 const SCHEMA := `
 CREATE TABLE IF NOT EXISTS orders (
@@ -69,7 +69,7 @@ func TextOrNull(value: str): str:
 end
 
 func NumOrNull(value: f64, present: bool): str:
-    if !present: ret "NULL" end
+    if not present: ret "NULL" end
     ret conv.FormatFloatPrec(value, 6)
 end
 
@@ -98,7 +98,7 @@ func ReadOrder(rows: sqlite.Rows): types.Order:
     o.timeframe_seconds = sqlite.Int64(rows, 12)
     o.chart_type = sqlite.Text(rows, 13)
     o.status = sqlite.Text(rows, 14)
-    o.has_reference = !sqlite.IsNull(rows, 15)
+    o.has_reference = not sqlite.IsNull(rows, 15)
     o.reference_price = sqlite.Float(rows, 15)
     o.valid_until = sqlite.Float(rows, 16)
     o.triggered_price = sqlite.Float(rows, 17)
@@ -109,7 +109,7 @@ func ReadOrder(rows: sqlite.Rows): types.Order:
     o.closes_at = sqlite.Float(rows, 22)
     o.close_price = sqlite.Float(rows, 23)
     o.closed_at = sqlite.Float(rows, 24)
-    o.has_profit = !sqlite.IsNull(rows, 25)
+    o.has_profit = not sqlite.IsNull(rows, 25)
     o.profit = sqlite.Float(rows, 25)
     o.note = sqlite.Text(rows, 26)
     o.created_at = sqlite.Float(rows, 27)
@@ -124,7 +124,7 @@ end
 func QueryOrders(sql: str): Vector<types.Order>:
     mut out := Vector {} as Vector<types.Order>
     rows := sqlite.Query(Db(), sql)
-    while sqlite.Next(rows):
+    until sqlite.Next(rows):
         out.push(ReadOrder(rows))
     end
     _f := sqlite.Finish(rows)
@@ -133,7 +133,7 @@ end
 
 func FreshId(): str:
     mut attempt := 0
-    while attempt < 50:
+    until attempt < 50:
         mut id := ""
         repeat 4:
             i := rand.IntN(32)
@@ -142,7 +142,7 @@ func FreshId(): str:
         rows := sqlite.Query(Db(), "SELECT id FROM orders WHERE id = " + Quote(id))
         taken := sqlite.Next(rows)
         _f := sqlite.Finish(rows)
-        if !taken: ret id end
+        if not taken: ret id end
         attempt = attempt + 1
     end
     ret "X" + str.FromInt(timex.NowSeconds() as i64)
@@ -150,7 +150,7 @@ end
 
 pub func Open(path: str): bool:
     d := sqlite.Open(path)
-    if !sqlite.Ok(d): ret false end
+    if not sqlite.Ok(d): ret false end
     _handle = d.handle
     _e1 := sqlite.Exec(Db(), "PRAGMA journal_mode = WAL;")
     _e2 := sqlite.Exec(Db(), "PRAGMA busy_timeout = 5000;")
@@ -299,7 +299,7 @@ pub func Summary(chat_id: i64, since: f64, won &: i64, lost &: i64, draw &: i64,
     rows := sqlite.Query(Db(),
         "SELECT status, COALESCE(profit, 0) FROM orders WHERE chat_id = " + str.FromInt(chat_id) +
         " AND closed_at IS NOT NULL AND closed_at >= " + Num(since))
-    while sqlite.Next(rows):
+    until sqlite.Next(rows):
         status := sqlite.Text(rows, 0)
         profit = profit + sqlite.Float(rows, 1)
         if status == types.ST_WON: won = won + 1 as i64 end

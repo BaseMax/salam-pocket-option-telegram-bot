@@ -117,11 +117,11 @@ pub func GapListMake(equal: bool, above: bool, below: bool): str:
 end
 
 pub func GapListHas(list: str, relation: str): bool:
-    if list.len() == 0 || relation.len() == 0: ret false end
+    if list.len() == 0 or relation.len() == 0: ret false end
     mut parts := list.split(",")
     defer parts.free()
     mut i := 0
-    while i < parts.len():
+    until i < parts.len():
         if parts.get(i) == relation: ret true end
         i = i + 1
     end
@@ -132,16 +132,16 @@ pub func GapListToggle(list: str, relation: str): str:
     mut equal := GapListHas(list, GAP_EQUAL)
     mut above := GapListHas(list, GAP_ABOVE)
     mut below := GapListHas(list, GAP_BELOW)
-    if relation == GAP_EQUAL: equal = !equal end
-    if relation == GAP_ABOVE: above = !above end
-    if relation == GAP_BELOW: below = !below end
+    if relation == GAP_EQUAL: equal = not equal end
+    if relation == GAP_ABOVE: above = not above end
+    if relation == GAP_BELOW: below = not below end
     ret GapListMake(equal, above, below)
 end
 
 pub func IsActive(status: str): bool:
-    ret status == ST_PENDING || status == ST_ARMED || status == ST_PLACING || status == ST_OPEN
+    ret status == ST_PENDING or status == ST_ARMED or status == ST_PLACING or status == ST_OPEN
 end
 
 pub func IsCancellable(status: str): bool:
-    ret status == ST_PENDING || status == ST_ARMED
+    ret status == ST_PENDING or status == ST_ARMED
 end

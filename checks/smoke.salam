@@ -3,12 +3,12 @@ package main
 import os
 import str
 import time
-import config "../src/config.salam"
-import broker "../src/pocket/broker.salam"
-import ssid "../src/pocket/ssid.salam"
-import types "../src/types.salam"
-import timex "../src/util/timex.salam"
-import symbols "../src/pocket/symbols.salam"
+include config "../src/config.salam"
+include broker "../src/pocket/broker.salam"
+include ssid "../src/pocket/ssid.salam"
+include types "../src/types.salam"
+include timex "../src/util/timex.salam"
+include symbols "../src/pocket/symbols.salam"
 
 func main:
     c := config.Load()
@@ -19,7 +19,7 @@ func main:
     end
 
     auth := ssid.Parse(raw, types.MODE_DEMO, c.demo_uid)
-    if !auth.ok:
+    if not auth.ok:
         println "SSID unreadable: " + auth.error
         ret
     end
@@ -38,20 +38,20 @@ func main:
     mut ticks := 0
     mut announced := false
 
-    while time.NowMillis() < deadline:
+    until time.NowMillis() < deadline:
         broker.Pump(200, c.max_tick_gap)
         s := broker.Get(idx)
 
-        if s.ready && !announced:
+        if s.ready and not announced:
             announced = true
             println "authenticated; server clock offset " + str.FromInt(s.time_offset) + "s"
         end
-        if s.has_price && ticks < 3:
+        if s.has_price and ticks < 3:
             ticks = ticks + 1
             println "tick " + str.FromInt(ticks as i64) + ": " + want + " = " + timex.FormatPrice(s.price) +
                 " at " + timex.FormatTime(s.last_tick_time - (s.time_offset as f64), c.timezone_offset)
         end
-        if s.has_balance && broker.AssetCount(types.MODE_DEMO) > 0 && ticks >= 3: break end
+        if s.has_balance and broker.AssetCount(types.MODE_DEMO) > 0 and ticks >= 3: break end
     end
 
     final := broker.Get(idx)
@@ -73,7 +73,7 @@ func main:
     mut list := broker.Assets(types.MODE_DEMO)
     mut open_count := 0
     mut i := 0
-    while i < list.len():
+    until i < list.len():
         if list.get(i).is_open: open_count = open_count + 1 end
         i = i + 1
     end

@@ -1,25 +1,25 @@
 package main
 
-import parse "../src/telegram/parse.salam"
 import str
 import time
 import telegram.bot
-import config "../src/config.salam"
-import tgapi "../src/telegram/tgapi.salam"
-import texts "../src/telegram/texts.salam"
-import types "../src/types.salam"
-import timex "../src/util/timex.salam"
+include parse "../src/telegram/parse.salam"
+include config "../src/config.salam"
+include tgapi "../src/telegram/tgapi.salam"
+include texts "../src/telegram/texts.salam"
+include types "../src/types.salam"
+include timex "../src/util/timex.salam"
 
 func main:
     c := config.Load()
-    if !config.Ok(c):
+    if not config.Ok(c):
         println "TELEGRAM_BOT_TOKEN is missing"
         ret
     end
 
     b := bot.NewBot(c.token)
     me := bot.GetMe(b)
-    if !me.ok:
+    if not me.ok:
         println "getMe failed: " + me.description
         ret
     end

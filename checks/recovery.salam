@@ -1,11 +1,11 @@
 package main
 
 import str
-import config "../src/config.salam"
-import store "../src/storage/store.salam"
-import engine "../src/engine/engine.salam"
-import tgbot "../src/telegram/tgbot.salam"
-import types "../src/types.salam"
+include config "../src/config.salam"
+include store "../src/storage/store.salam"
+include engine "../src/engine/engine.salam"
+include tgbot "../src/telegram/tgbot.salam"
+include types "../src/types.salam"
 
 mut failures := 0
 
@@ -39,7 +39,7 @@ end
 func main:
     path := "/tmp/salam-recovery.sqlite"
 
-    if !store.Open(path):
+    if not store.Open(path):
         println "could not open the database"
         ret
     end
@@ -64,10 +64,10 @@ func main:
     Check(engine.ActiveCount() == 2, "both are followed again, the failed one is not")
 
     mut saw_failure := false
-    while true:
+    until true:
         e := engine.TakeEvent()
         if e.kind.len() == 0: break end
-        if e.kind == engine.EV_FAILED && e.order.id == placing.id:
+        if e.kind == engine.EV_FAILED and e.order.id == placing.id:
             saw_failure = true
             text := tgbot.EventText(e)
             Check(str.Contains(text, placing.id), "the chat is told, naming the order")
@@ -87,7 +87,7 @@ func main:
     store.Close()
 
     println "checking the same database opens again"
-    if !store.Open(path):
+    if not store.Open(path):
         println "  FAIL could not reopen"
         failures = failures + 1
     else:

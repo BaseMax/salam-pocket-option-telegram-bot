@@ -2,13 +2,13 @@ package main
 
 import str
 import time
-import config "../src/config.salam"
-import store "../src/storage/store.salam"
-import broker "../src/pocket/broker.salam"
-import engine "../src/engine/engine.salam"
-import ssid "../src/pocket/ssid.salam"
-import types "../src/types.salam"
-import timex "../src/util/timex.salam"
+include config "../src/config.salam"
+include store "../src/storage/store.salam"
+include broker "../src/pocket/broker.salam"
+include engine "../src/engine/engine.salam"
+include ssid "../src/pocket/ssid.salam"
+include types "../src/types.salam"
+include timex "../src/util/timex.salam"
 
 func main:
     c := config.Load()
@@ -17,12 +17,12 @@ func main:
         ret
     end
     auth := ssid.Parse(c.demo_ssid, types.MODE_DEMO, c.demo_uid)
-    if !auth.ok:
+    if not auth.ok:
         println "SSID unreadable: " + auth.error
         ret
     end
 
-    if !store.Open("/tmp/salam-soak.sqlite"):
+    if not store.Open("/tmp/salam-soak.sqlite"):
         println "could not open the scratch database"
         ret
     end
@@ -56,7 +56,7 @@ func main:
     mut last_house := 0.0
     mut turns := 0 as i64
 
-    while time.NowMillis() < deadline:
+    until time.NowMillis() < deadline:
         engine.Step(120)
         turns = turns + 1 as i64
         now := timex.NowSeconds()
@@ -66,7 +66,7 @@ func main:
             engine.Housekeep()
         end
 
-        while true:
+        until true:
             e := engine.TakeEvent()
             if e.kind.len() == 0: break end
             println "event: " + e.kind + " " + e.order.id + " " + e.order.status + " " + e.detail

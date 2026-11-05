@@ -1,10 +1,10 @@
 package tgapi
 
-import parse "parse.salam"
 import str
 import telegram.bot
 import encoding.json
-import texts "texts.salam"
+include parse "parse.salam"
+include texts "texts.salam"
 
 pub struct Keyboard:
     pub rows: str = ""
@@ -65,7 +65,7 @@ pub func Send(b: bot.Bot, chat_id: i64, text: str, markup: str): i64:
     if markup.len() > 0: p.put("reply_markup", markup) end
 
     resp := bot.Call(b, "sendMessage", p)
-    if !resp.ok: ret 0 end
+    if not resp.ok: ret 0 end
     ret parse.ParseInt64(json.Get(resp.result, "message_id"))
 end
 
@@ -146,7 +146,7 @@ pub func Finish(b: bot.Bot, chat_id: i64, message_id: i64, text: str):
         _m := Send(b, chat_id, text, "")
         ret
     end
-    if !Edit(b, chat_id, message_id, text, ""):
+    if not Edit(b, chat_id, message_id, text, ""):
         _m := Send(b, chat_id, text, "")
     end
 end

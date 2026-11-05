@@ -4,12 +4,12 @@ import str
 import conv
 import time
 import net.socketio
-import jsonx "../util/jsonx.salam"
-import types "../types.salam"
-import symbols "symbols.salam"
-import timex "../util/timex.salam"
-import config "../config.salam"
-import ssid "ssid.salam"
+include jsonx "../util/jsonx.salam"
+include types "../types.salam"
+include symbols "symbols.salam"
+include timex "../util/timex.salam"
+include config "../config.salam"
+include ssid "ssid.salam"
 
 const OUT_AUTH := "auth"
 const OUT_USER_INIT := "user_init"
@@ -138,7 +138,7 @@ end
 
 func SendAuth(s: Session):
     c := CredsFor(s.mode)
-    if !c.ok: ret end
+    if not c.ok: ret end
     client := ClientOf(s)
     if c.has_init:
         _i := socketio.EmitJSON(client, OUT_USER_INIT, c.init_frame)
@@ -157,7 +157,7 @@ end
 func LearnOffset(s &: Session, broker_time: f64):
     if broker_time <= 0.0: ret end
     raw := broker_time - timex.NowSeconds()
-    if raw > 86400.0 || raw < 0.0 - 86400.0: ret end
+    if raw > 86400.0 or raw < 0.0 - 86400.0: ret end
     snapped := ((raw / (OFFSET_QUANTUM as f64) + 0.5) as i64) * OFFSET_QUANTUM
     if snapped != s.time_offset:
         Log("server time offset learned: " + str.FromInt(s.time_offset) + "s -> " + str.FromInt(snapped) + "s")
@@ -169,7 +169,7 @@ func TrackCandle(s &: Session, tick_time: f64, price: f64, follows_gap: bool):
     if s.timeframe <= 0: ret end
     bucket := timex.CandleOpenTime(tick_time, s.timeframe)
 
-    if !s.has_candle:
+    if not s.has_candle:
         s.candle_open_time = bucket
         s.candle_open_price = price
         s.has_candle = true
@@ -192,12 +192,12 @@ func ResetCandles(s &: Session):
 end
 
 func ApplyTick(s &: Session, symbol: str, tick_time: f64, price: f64, max_gap: i64):
-    if s.symbol.len() > 0 && symbol != s.symbol: ret end
+    if s.symbol.len() > 0 and symbol != s.symbol: ret end
 
     mut silence := 0.0
     if s.last_tick_time > 0.0: silence = tick_time - s.last_tick_time end
-    s.tick_follows_gap = s.lost_data || silence > (max_gap as f64)
-    if s.tick_follows_gap && s.last_tick_time > 0.0:
+    s.tick_follows_gap = s.lost_data or silence > (max_gap as f64)
+    if s.tick_follows_gap and s.last_tick_time > 0.0:
         Log("resuming after a " + str.FromInt(silence as i64) + "s gap in the price stream")
     end
 
@@ -217,21 +217,21 @@ func ReadAssets(raw: str): Vector<symbols.Asset>:
     defer rows.free()
 
     mut i := 0
-    while i < rows.len():
+    until i < rows.len():
         mut cols := jsonx.SplitArray(rows.get(i))
         if cols.len() >= 3:
             mut a := symbols.Asset {}
             a.symbol = jsonx.Unquote(cols.get(1))
             a.name = jsonx.Unquote(cols.get(2))
-            if cols.len() > 5 && !jsonx.IsNull(cols.get(5)):
+            if cols.len() > 5 and not jsonx.IsNull(cols.get(5)):
                 a.payout = jsonx.AsInt(cols.get(5))
                 a.has_payout = true
             end
             a.is_open = true
             mut k := 12
-            while k < cols.len():
+            until k < cols.len():
                 v := str.Trim(cols.get(k))
-                if v == "true" || v == "false":
+                if v == "true" or v == "false":
                     a.is_open = v == "true"
                     break
                 end
@@ -259,14 +259,14 @@ func ReadDeals(raw: str): Vector<Deal>:
     mut out := Vector {} as Vector<Deal>
     text := str.Trim(raw)
     mut body := text
-    if text.len() > 0 && text.substr(0, 1) == "{":
+    if text.len() > 0 and text.substr(0, 1) == "{":
         body = jsonx.Field(text, "deals")
     end
 
     mut rows := jsonx.SplitArray(body)
     defer rows.free()
     mut i := 0
-    while i < rows.len():
+    until i < rows.len():
         obj := rows.get(i)
         mut d := Deal {}
         d.deal_id = jsonx.Unquote(jsonx.Field(obj, "id"))
@@ -286,7 +286,7 @@ end
 func HandleEvent(index: int, name: str, payload: str, max_gap: i64):
     mut s := _sessions.get(index)
 
-    if name == IN_SUCCESS_AUTH || name == IN_AUTH_SUCCESS:
+    if name == IN_SUCCESS_AUTH or name == IN_AUTH_SUCCESS:
         s.ready = true
         s.was_ready = true
         s.auth_failed = false
@@ -296,7 +296,7 @@ func HandleEvent(index: int, name: str, payload: str, max_gap: i64):
         ret
     end
 
-    if name == IN_NOT_AUTHORIZED || name == IN_AUTH_ERROR:
+    if name == IN_NOT_AUTHORIZED or name == IN_AUTH_ERROR:
         s.auth_failed = true
         s.ready = false
         s.auth_error = "کارگزار این نشست را نپذیرفت (" + name + ")."
@@ -307,14 +307,14 @@ func HandleEvent(index: int, name: str, payload: str, max_gap: i64):
 
     if name == IN_SID:
         _sessions.set(index, s)
-        if !s.ready: SendAuth(s) end
+        if not s.ready: SendAuth(s) end
         ret
     end
 
     if name == IN_STREAM:
         mut rows := jsonx.SplitArray(payload)
         mut i := 0
-        while i < rows.len():
+        until i < rows.len():
             mut cols := jsonx.SplitArray(rows.get(i))
             if cols.len() >= 3:
                 ApplyTick(s, jsonx.Unquote(cols.get(0)), jsonx.AsFloat(cols.get(1)), jsonx.AsFloat(cols.get(2)), max_gap)
@@ -327,7 +327,7 @@ func HandleEvent(index: int, name: str, payload: str, max_gap: i64):
         ret
     end
 
-    if name == IN_HISTORY_NEW || name == IN_HISTORY_PERIOD:
+    if name == IN_HISTORY_NEW or name == IN_HISTORY_PERIOD:
         asset := jsonx.Unquote(jsonx.Field(payload, "asset"))
         mut history := jsonx.SplitArray(jsonx.Field(payload, "history"))
         if history.len() == 0:
@@ -349,17 +349,17 @@ func HandleEvent(index: int, name: str, payload: str, max_gap: i64):
         ret
     end
 
-    if name == IN_BALANCE || name == IN_BALANCE_OK:
+    if name == IN_BALANCE or name == IN_BALANCE_OK:
         s.ready = true
         s.was_ready = true
         mut value := 0.0
         text := str.Trim(payload)
-        if text.len() > 0 && text.substr(0, 1) == "{":
+        if text.len() > 0 and text.substr(0, 1) == "{":
             value = jsonx.FieldFloat(text, "balance")
         else:
             value = jsonx.AsFloat(text)
         end
-        if value != 0.0 || !s.has_balance:
+        if value != 0.0 or not s.has_balance:
             s.balance = value
             s.has_balance = true
         end
@@ -380,10 +380,10 @@ func HandleEvent(index: int, name: str, payload: str, max_gap: i64):
         ret
     end
 
-    if name == IN_CLOSE_OK || name == IN_CLOSED_DEALS:
+    if name == IN_CLOSE_OK or name == IN_CLOSED_DEALS:
         mut deals := ReadDeals(payload)
         mut i := 0
-        while i < deals.len():
+        until i < deals.len():
             _deals.push(deals.get(i))
             i = i + 1
         end
@@ -402,13 +402,13 @@ func PumpOne(index: int, wait_ms: int, max_gap: i64):
 
     mut budget := 16
     mut first := true
-    while budget > 0:
+    until budget > 0:
         mut ms := 1
         if first: ms = wait_ms end
-        ev := socketio.Next(client, ms)
+        mut ev := socketio.Next(client, ms)
         first = false
 
-        if ev.kind == socketio.EV_TIMEOUT || ev.kind == socketio.EV_NONE:
+        if ev.kind == socketio.EV_TIMEOUT or ev.kind == socketio.EV_NONE:
             socketio.EventFree(ev)
             break
         end
@@ -424,7 +424,7 @@ func PumpOne(index: int, wait_ms: int, max_gap: i64):
             mut fresh := _sessions.get(index)
             fresh.ready = false
             fresh.lost_data = true
-            if !fresh.was_ready && fresh.auth_sent_at > 0.0 && timex.NowSeconds() - fresh.auth_sent_at < AUTH_DROP_WINDOW:
+            if not fresh.was_ready and fresh.auth_sent_at > 0.0 and timex.NowSeconds() - fresh.auth_sent_at < AUTH_DROP_WINDOW:
                 fresh.auth_failed = true
                 fresh.auth_error = "کارگزار بلافاصله بعد از احراز هویت اتصال را بست؛ این نشست نامعتبر یا منقضی است."
             end
@@ -447,7 +447,7 @@ func PumpOne(index: int, wait_ms: int, max_gap: i64):
     mut after := _sessions.get(index)
     now := timex.NowSeconds()
 
-    if !after.ready && !after.auth_failed && after.auth_sent_at > 0.0 && now - after.auth_sent_at > AUTH_SILENCE:
+    if not after.ready and not after.auth_failed and after.auth_sent_at > 0.0 and now - after.auth_sent_at > AUTH_SILENCE:
         after.auth_timeouts = after.auth_timeouts + 1 as i64
         after.auth_sent_at = now
         mut allowed := 1 as i64
@@ -459,7 +459,7 @@ func PumpOne(index: int, wait_ms: int, max_gap: i64):
         _sessions.set(index, after)
     end
 
-    if after.ready && now - after.last_player_state > PLAYER_STATE_INTERVAL:
+    if after.ready and now - after.last_player_state > PLAYER_STATE_INTERVAL:
         after.last_player_state = now
         _sessions.set(index, after)
         _p := socketio.Emit(ClientOf(after), OUT_PLAYER_STATE)
@@ -496,7 +496,7 @@ func OpenSocket(s &: Session):
 end
 
 pub func CloseIsKnown(previous_open_time: f64, new_open_time: f64, timeframe: i64, has_price: bool, follows_gap: bool): bool:
-    if !has_price || follows_gap: ret false end
+    if not has_price or follows_gap: ret false end
     if timeframe <= 0: ret false end
     ret new_open_time == previous_open_time + (timeframe as f64)
 end
@@ -526,16 +526,16 @@ end
 
 pub func Find(mode: str, symbol: str): int:
     mut i := 0
-    while i < _sessions.len():
+    until i < _sessions.len():
         s := _sessions.get(i)
-        if s.p != null && s.mode == mode && s.symbol == symbol: ret i end
+        if s.p != null and s.mode == mode and s.symbol == symbol: ret i end
         i = i + 1
     end
     ret 0 - 1
 end
 
 pub func IsLive(index: int): bool:
-    if index < 0 || index >= _sessions.len(): ret false end
+    if index < 0 or index >= _sessions.len(): ret false end
     ret _sessions.get(index).p != null
 end
 
@@ -545,7 +545,7 @@ pub func Acquire(mode: str, symbol: str, timeframe: i64): int:
         mut s := _sessions.get(existing)
         s.holders = s.holders + 1 as i64
         s.idle_since = 0.0
-        if timeframe > 0 && timeframe != s.timeframe:
+        if timeframe > 0 and timeframe != s.timeframe:
             s.timeframe = timeframe
             ResetCandles(s)
             _sessions.set(existing, s)
@@ -564,7 +564,7 @@ pub func Acquire(mode: str, symbol: str, timeframe: i64): int:
     OpenSocket(s)
 
     mut i := 0
-    while i < _sessions.len():
+    until i < _sessions.len():
         if _sessions.get(i).p == null:
             _sessions.set(i, s)
             ret i
@@ -576,7 +576,7 @@ pub func Acquire(mode: str, symbol: str, timeframe: i64): int:
 end
 
 pub func Release(index: int):
-    if index < 0 || index >= _sessions.len(): ret end
+    if index < 0 or index >= _sessions.len(): ret end
     mut s := _sessions.get(index)
     if s.holders > 0: s.holders = s.holders - 1 as i64 end
     if s.holders == 0: s.idle_since = timex.NowSeconds() end
@@ -584,7 +584,7 @@ pub func Release(index: int):
 end
 
 pub func Get(index: int): Session:
-    if index < 0 || index >= _sessions.len(): ret Session {} end
+    if index < 0 or index >= _sessions.len(): ret Session {} end
     ret _sessions.get(index)
 end
 
@@ -593,9 +593,9 @@ pub func Count(): int:
 end
 
 pub func EnsureTimeframe(index: int, timeframe: i64):
-    if index < 0 || index >= _sessions.len(): ret end
+    if index < 0 or index >= _sessions.len(): ret end
     mut s := _sessions.get(index)
-    if timeframe <= 0 || timeframe == s.timeframe: ret end
+    if timeframe <= 0 or timeframe == s.timeframe: ret end
     s.timeframe = timeframe
     ResetCandles(s)
     _sessions.set(index, s)
@@ -605,7 +605,7 @@ end
 pub func Pump(wait_ms: int, max_gap: i64):
     mut count := 0
     mut k := 0
-    while k < _sessions.len():
+    until k < _sessions.len():
         if _sessions.get(k).p != null: count = count + 1 end
         k = k + 1
     end
@@ -619,7 +619,7 @@ pub func Pump(wait_ms: int, max_gap: i64):
     if share < 5: share = 5 end
 
     mut i := 0
-    while i < _sessions.len():
+    until i < _sessions.len():
         if _sessions.get(i).p != null: PumpOne(i, share, max_gap) end
         i = i + 1
     end
@@ -628,9 +628,9 @@ end
 pub func CloseIdle(idle_ttl: i64):
     now := timex.NowSeconds()
     mut i := 0
-    while i < _sessions.len():
+    until i < _sessions.len():
         s := _sessions.get(i)
-        if s.p != null && s.holders == 0 && s.idle_since > 0.0 && now - s.idle_since > (idle_ttl as f64):
+        if s.p != null and s.holders == 0 and s.idle_since > 0.0 and now - s.idle_since > (idle_ttl as f64):
             Log("closing idle session " + s.mode + "/" + s.symbol)
             socketio.Close(ClientOf(s))
             _sessions.set(i, Session {})
@@ -641,9 +641,9 @@ end
 
 pub func ResetMode(mode: str):
     mut i := 0
-    while i < _sessions.len():
+    until i < _sessions.len():
         s := _sessions.get(i)
-        if s.p != null && s.mode == mode:
+        if s.p != null and s.mode == mode:
             socketio.Close(ClientOf(s))
             _sessions.set(i, Session {})
         end
@@ -653,7 +653,7 @@ end
 
 pub func CloseAll():
     mut i := 0
-    while i < _sessions.len():
+    until i < _sessions.len():
         s := _sessions.get(i)
         if s.p != null: socketio.Close(ClientOf(s)) end
         _sessions.set(i, Session {})
@@ -664,9 +664,9 @@ end
 pub func CachedBalance(mode: str, balance &: f64): bool:
     balance = 0.0
     mut i := 0
-    while i < _sessions.len():
+    until i < _sessions.len():
         s := _sessions.get(i)
-        if s.p != null && s.mode == mode && s.has_balance:
+        if s.p != null and s.mode == mode and s.has_balance:
             balance = s.balance
             ret true
         end
@@ -692,7 +692,7 @@ pub func TakeDeal(): Deal:
 end
 
 pub func RefreshBalance(index: int):
-    if index < 0 || index >= _sessions.len(): ret end
+    if index < 0 or index >= _sessions.len(): ret end
     s := _sessions.get(index)
     if s.p == null: ret end
     _p := socketio.Emit(ClientOf(s), OUT_PLAYER_STATE)
@@ -700,13 +700,13 @@ end
 
 pub func PlaceOrder(index: int, amount: f64, direction: str, duration_seconds: i64, close_at: f64, timeout_ms: i64, max_gap: i64): Ack:
     mut ack := Ack {}
-    if index < 0 || index >= _sessions.len():
+    if index < 0 or index >= _sessions.len():
         ack.error = "no live session for this order"
         ret ack
     end
 
     s := _sessions.get(index)
-    if s.p == null || !s.ready:
+    if s.p == null or not s.ready:
         ack.error = "not connected to Pocket Option"
         ret ack
     end
@@ -727,22 +727,22 @@ pub func PlaceOrder(index: int, amount: f64, direction: str, duration_seconds: i
     body = body + "}"
 
     Log("placing " + direction + " " + s.symbol + " " + body)
-    if !socketio.EmitJSON(ClientOf(s), OUT_OPEN_ORDER, body):
+    if not socketio.EmitJSON(ClientOf(s), OUT_OPEN_ORDER, body):
         ack.error = "could not send the order"
         ret ack
     end
 
     deadline := time.NowMillis() + timeout_ms
-    while time.NowMillis() < deadline:
+    until time.NowMillis() < deadline:
         mut fresh := _sessions.get(index)
         client := ClientOf(fresh)
-        ev := socketio.Next(client, 100)
+        mut ev := socketio.Next(client, 100)
 
         if ev.kind == socketio.EV_EVENT:
             payload := Payload(ev)
             if ev.name == IN_OPEN_OK:
                 answered := jsonx.Field(payload, "requestId")
-                if !jsonx.IsNull(answered) && jsonx.AsInt(answered) != request_id:
+                if not jsonx.IsNull(answered) and jsonx.AsInt(answered) != request_id:
                     Log("ignoring an acknowledgement for request " + answered)
                     HandleEvent(index, ev.name, payload, max_gap)
                     socketio.EventFree(ev)
@@ -753,7 +753,7 @@ pub func PlaceOrder(index: int, amount: f64, direction: str, duration_seconds: i
                 ack.open_time = jsonx.AsFloat(jsonx.FieldAny(payload, "openTimestamp", "openTime"))
                 ack.close_time = jsonx.AsFloat(jsonx.FieldAny(payload, "closeTimestamp", "closeTime"))
                 ack.ok = ack.deal_id.len() > 0
-                if !ack.ok: ack.error = "the broker acknowledged an order with no id" end
+                if not ack.ok: ack.error = "the broker acknowledged an order with no id" end
                 LearnOffset(fresh, ack.open_time)
                 _sessions.set(index, fresh)
                 socketio.EventFree(ev)
@@ -761,7 +761,7 @@ pub func PlaceOrder(index: int, amount: f64, direction: str, duration_seconds: i
             end
             if ev.name == IN_OPEN_FAIL:
                 refused := jsonx.Field(payload, "requestId")
-                if !jsonx.IsNull(refused) && jsonx.AsInt(refused) != request_id:
+                if not jsonx.IsNull(refused) and jsonx.AsInt(refused) != request_id:
                     socketio.EventFree(ev)
                     continue
                 end

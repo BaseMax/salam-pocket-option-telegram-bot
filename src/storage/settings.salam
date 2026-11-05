@@ -1,9 +1,9 @@
 package settings
 
 import str
-import types "../types.salam"
-import store "store.salam"
-import config "../config.salam"
+include types "../types.salam"
+include store "store.salam"
+include config "../config.salam"
 
 mut _config := config.Config {}
 
@@ -126,7 +126,7 @@ pub func IsOwner(chat_id: i64): bool:
     defer parts.free()
     want := str.FromInt(chat_id)
     mut i := 0
-    while i < parts.len():
+    until i < parts.len():
         if str.Trim(parts.get(i)) == want: ret true end
         i = i + 1
     end
